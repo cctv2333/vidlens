@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # Runtime deps are intentionally few and pinned by extras; weekly PRs keep the
+  # optional stacks (sensevoice / whisper / audioevents) from rotting silently.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+    groups:
+      whisper-stack:
+        patterns:
+          - "openai-whisper"
+          - "faster-whisper"
+          - "ctranslate2"
+          - "onnxruntime"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
