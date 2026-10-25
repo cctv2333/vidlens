@@ -333,8 +333,9 @@ LAST_ERRORS: list[tuple[float, str]] = []
 
 def _label_frame(video: str, t: float, dst: Path, width: int) -> bool:
     font = core.find_font() if hasattr(core, "find_font") else None
+    can_label = bool(font) and (core.has_drawtext() if hasattr(core, "has_drawtext") else True)
     vf = f"scale={width}:-2"
-    if font:
+    if can_label:
         fp = str(font).replace("\\", "/").replace(":", "\\:")
         # a raw ':' inside drawtext text breaks the filter graph - escape it
         label = core.hms(t).replace(":", "\\:")

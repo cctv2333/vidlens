@@ -83,6 +83,29 @@ class CoreTests(unittest.TestCase):
         self.assertTrue((d / "sheet_100000_104000.jpg").exists(),
                         "offset not applied to output name")
 
+    def test_has_drawtext_is_a_bool(self):
+        self.assertIn(C.has_drawtext(), (True, False))
+
+    def test_sheet_survives_ffmpeg_without_drawtext(self):
+        """Linux CI: imageio's ffmpeg has no libfreetype, so drawtext is absent.
+
+        A sheet must still be produced (same frames, same filename); only the
+        burned labels are skipped.
+        """
+        d = self.dir / "sheet_nodt"
+        d.mkdir(exist_ok=True)
+        a = types.SimpleNamespace(video=str(self.video), out=str(d), start="0", end="4",
+                                  cols=2, rows=2, width=160, fs=12, offset=0.0)
+        original = C.has_drawtext
+        C.has_drawtext = lambda: False
+        try:
+            C.cmd_sheet(a)
+        finally:
+            C.has_drawtext = original
+        made = d / "sheet_0_4000.jpg"
+        self.assertTrue(made.exists(), "sheet not produced without drawtext")
+        self.assertGreater(made.stat().st_size, 100)
+
     def test_pauses_finds_silence_gap(self):
         d = self.dir / "pause"
         d.mkdir(exist_ok=True)

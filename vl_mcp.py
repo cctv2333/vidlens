@@ -646,6 +646,9 @@ def video_sheet(url: str, start: str = "0", end: str = "20",
         txt = (f"{core.hms(t0)} → {core.hms(t1)}，{cols}×{rows} 格，"
                f"每格约 {dur/(cols*rows):.1f} 秒，格子左上角是绝对时间码。\n"
                f"文件: {img}")
+        if not core.has_drawtext():
+            txt += ("\n（注意：本机 ffmpeg 没有 drawtext，格子上**没有**烧时间码；"
+                    "文件名的起止毫秒仍然准确，按格顺序可推算每格时间）")
         return [Image(path=str(img)), txt]
     except SystemExit as e:
         return [f"ERROR: {e}"]
@@ -820,6 +823,8 @@ def video_visual_scan(url: str, n: int = 24, cols: int = 6, rows: int = 4) -> li
         txt = (f"抽样 {len(r['picked'])} 帧（切点 {r['cuts']} 个），时长 {core.hms(r['duration'])}。\n"
                + '取点: ' + ', '.join(core.hms(t) for t in r['picked'][:24]) + '\n'
                + '图: ' + '; '.join(r['sheets']))
+        if not core.has_drawtext():
+            txt += "\n（注意：本机 ffmpeg 没有 drawtext，帧上没有烧时间码；取点顺序见上行）"
         return imgs[:4] + [txt]
     except SystemExit as e:
         return [f'ERROR: {e}']

@@ -342,6 +342,9 @@ git tag v1.4.0 && git push origin v1.4.0
 4. **`-ss` 会让 pts 归零**，拼图时间码会全错 → 必须 `setpts=PTS+offset/TB`。
 5. **静音段分两种**：话中犹豫，和片尾无词。混在一起会给出 8 条一样的"犹豫"结论。
 6. **PowerShell 读无 BOM 脚本，中文全烂；`.cmd` 必须 CRLF；中文别走命令行参数。**
+7. **Linux 上 imageio 的 ffmpeg 没有 `drawtext`**（没编 libfreetype）：拼图/抽样帧不能烧时间码。
+   现在会先用 `has_drawtext()` 探一次，没有就**跳过烧字**、照样出图（文件名与时间码仍然准确），
+   并在回执里注明 —— 以前是直接整张拼图失败。
 
 ## 许可证与归属
 

@@ -294,6 +294,26 @@ def find_font():
     return None
 
 
+_DRAWTEXT: bool | None = None
+
+
+def has_drawtext() -> bool:
+    """Whether this ffmpeg build has the drawtext filter (needs libfreetype).
+
+    imageio-ffmpeg's Linux build usually omits it, so burned timecodes are an
+    enhancement we must be able to skip: a sheet without labels still carries
+    the same frames, and its filename/timecodes stay correct.
+    """
+    global _DRAWTEXT
+    if _DRAWTEXT is None:
+        try:
+            _rc, so, _se = run(["-hide_banner", "-filters"])
+            _DRAWTEXT = "drawtext" in (so or "")
+        except Exception:
+            _DRAWTEXT = False
+    return _DRAWTEXT
+
+
 def cmd_sheet(a):
     d = outdir(Path(a.video), a.out)
     start, end = parse_t(a.start), parse_t(a.end)
@@ -303,7 +323,8 @@ def cmd_sheet(a):
     # -ss 会让 pts 从 0 重新计时，必须把绝对时间加回去，否则烧进画面的时间码是错的
     vf = f"setpts=PTS+{start + offset:.3f}/TB,fps={fps:.4f},scale={a.width}:-2"
     font = find_font()
-    if font:
+    labelled = bool(font) and has_drawtext()
+    if labelled:
         fp = font.replace("\\", "/").replace(":", "\\:")
         vf += (f",drawtext=fontfile='{fp}':text='%{{pts\\:hms}}':x=6:y=6:fontsize={a.fs}:"
                f"fontcolor=yellow:box=1:boxcolor=black@0.55")
@@ -319,6 +340,9 @@ def cmd_sheet(a):
     if getattr(a, "verbose", True):
         print(f"range {hms(start + offset)} -> {hms(end + offset)}  grid {a.cols}x{a.rows}  "
               f"one tile ~ {dur/(a.cols*a.rows):.2f}s")
+        if not labelled:
+            print("note: this ffmpeg has no drawtext/font — tiles are NOT timecoded "
+                  "（文件名与时间码仍然正确）")
 
 
 def wav_of(video, dst: Path, sr=16000):
