@@ -1,5 +1,9 @@
 # vidlens
 
+[![ci](https://github.com/cctv2333/vidlens/actions/workflows/ci.yml/badge.svg)](https://github.com/cctv2333/vidlens/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/vidlens-mcp.svg)](https://pypi.org/project/vidlens-mcp/)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 把一个**公开可看**的视频，降解成「模型能真正读懂的证据表」。
 零云 API、零视觉模型、零显卡依赖。核心原则：**只下最小必要字节**。
 
@@ -299,19 +303,34 @@ out/<视频id>/
   `mcp.json`）。本次包解压后 94 项测试通过。
 - 许可证：**MIT**（见 `LICENSE`）；模型权重不随仓库/分发包分发。
 
-## 测试（94 项，默认不依赖网络）
+## 测试（104 项，默认不依赖网络）
 
 ```bash
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 `core` 9 + `web` 23 + `extra` 12 + `ads` 9 + `mcp` 7（含真实 stdio 握手）+
-`plan` 10 + `features` 24（字幕/抽样/cookie/缓存/边界/声音工具/模型目录）。
+`plan` 10 + `features` 24（字幕/抽样/cookie/缓存/边界/声音工具/模型目录）+
+`audioevents` 7（声音事件，模型缺失时自动跳过）+ `lock` 3（跨进程锁）。
 网络相关用例用 `VIDLENS_NET_TESTS=1` 打开。
 
 覆盖：探测、切点、抽帧命名、拼图偏移（历史 bug 回归）、静音检测、时间码解析、
 SRT 生成、模型目录、零宽字符清洗、中英文注入检测、shell/外泄检测、
-滚动字幕去重、VTT 解析、片段参数边界、登录墙识别、空壳元数据拒绝。
+滚动字幕去重、VTT 解析、片段参数边界、登录墙识别、空壳元数据拒绝、
+AudioSet 窗口切分与时间码不漂移、跨进程文件锁。
+
+## 发布（维护者）
+
+- CI：`.github/workflows/ci.yml`（ubuntu + windows × python 3.10/3.12，离线测试 +
+  wheel 构建 + 「安装形态写用户数据目录」检查）。
+- 发版：打 tag 即发布。
+
+```bash
+git tag v1.4.0 && git push origin v1.4.0
+```
+
+`release.yml` 构建 sdist + wheel、上传 PyPI（需要仓库 secret `PYPI_API_TOKEN`；
+也可改用 PyPI Trusted Publishing）、并附到 GitHub Release。
 
 ## 已知坑（都是实测踩过的）
 
