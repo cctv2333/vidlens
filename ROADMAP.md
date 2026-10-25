@@ -17,15 +17,25 @@
 
 ---
 
-## 1. P0 — 发布收尾（预计 0.5 天，都是小活）
+## 1. P0 — 发布收尾（已完成，2026-10-25）
 
-| # | 事项 | 为什么 | 验收标准 |
+| # | 事项 | 状态 | 证据 |
 |---|---|---|---|
-| P0-1 | PyPI 切 Trusted Publishing | 现在还用 `PYPI_API_TOKEN`，与 npm 已 OIDC 不一致 | 删掉 secret 后，打新 tag 能发布成功；仓库里 grep 不到 token 名 |
-| P0-2 | 清理 npm 占位版本 `0.0.0-stage` | 页面首屏显示 000，观感差 | `registry.npmjs.org/dsh-vidlens` 的 versions 里只剩正式版本 |
-| P0-3 | 删 `NPM_TOKEN` / `PYPI_API_TOKEN` secret、撤销旧 token | 减少可泄露面 | GitHub Secrets 列表为空；npm/PyPI 的 token 列表只剩必要项 |
-| P0-4 | npm badge、release 说明模板 | 仓库第一眼可信度 | README 显示 npm 版本；Release body 有固定三段（变更/验证/兼容） |
-| P0-5 | Dependabot（npm + pip + actions） | 依赖安全 | 每周自动 PR；CI 必须绿才能合 |
+| P0-1 | PyPI 切 Trusted Publishing | ✅ 已完成 | 两个仓库 Actions Secrets 为空，`release.yml` 只有 `id-token: write`；v1.4.1 就是无 token 发出去的 |
+| P0-2 | 清理 npm 占位版本 `0.0.0-stage` | ⏳ 需你 2FA | `npm unpublish dsh-vidlens@0.0.0-stage` 报 EOTP，必须本人认证；不影响 `latest=1.2.1` |
+| P0-3 | 删 token secret | ✅ 已完成 | 两个仓库 secrets 列表均为空；`release.yml` 注释里的旧 token 说明也已改掉 |
+| P0-4 | badge | ✅ 已完成 | README 顶部：CI / npm / PyPI / dsh-plugin topic / MIT |
+| P0-5 | Dependabot | ✅ 已完成 | 两个仓库 `.github/dependabot.yml`（npm·pip·actions，每周）；推送后 GitHub 立刻起了一轮 update job |
+
+## 1.5 分发与曝光（2026-10-25 起）
+
+| # | 事项 | 状态 | 说明 |
+|---|---|---|---|
+| D-1 | 仓库 topics | ✅ | 两个仓库都已打：`dsh-plugin` `dsh` `deepseek-harness` `cordis` `mcp` + 领域词 |
+| D-2 | 仓库 description | ✅ | 中英都写清了「18 个工具 / 不下载整片」 |
+| D-3 | 收录进 awesome-dsh-plugin（= dsh-market 与 Discover 的数据源） | ⏳ 等仓库满 1 天 | 条目已写好并推到 fork 分支 `add-dsh-vidlens`；该列表 CI 硬性要求仓库创建满 1 天，2026-10-26 16:34 (+08:00) 后开 PR |
+| D-4 | 商店图标 | ✅ | `assets/icon-180.png`（180×180，GitHub 托管的位图，条目里用 `icon:` 指向 raw） |
+| D-5 | 截图（dsh-market 详情页） | ⏳ | 需要真实运行截图，`screenshots.json` 放在本仓库，1–8 张 |
 
 ## 2. P1 — 用户最可能马上要的（1–3 天）
 

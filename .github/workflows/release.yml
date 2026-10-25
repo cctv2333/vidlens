@@ -2,9 +2,14 @@ name: release
 
 # Tag a commit `v*` to publish to PyPI and attach the artifacts to a GitHub Release.
 #
-# Required repository secret: PYPI_API_TOKEN  (a PyPI API token, scope = this project)
-# Optional upgrade: replace the password below with PyPI Trusted Publishing
-#   (id-token: write + `pypi` environment, no secret at all).
+# Auth is PyPI Trusted Publishing (OIDC) — there is no API token and no secret to
+# rotate. One-time setup, already done for this project:
+#   https://pypi.org/manage/project/vidlens-mcp/settings/publishing/
+#     Owner / Repository : cctv2333 / vidlens
+#     Workflow filename  : release.yml
+#     Environment name   : pypi
+# If a publish ever fails with "trusted publisher" in the message, that
+# registration drifted — re-add it there rather than reintroducing a token.
 
 on:
   push:
