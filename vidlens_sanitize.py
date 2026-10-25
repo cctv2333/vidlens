@@ -116,12 +116,17 @@ def scan(text: str, where: str = "") -> list[dict]:
         out.append({"kind": kind, "severity": SEVERITY.get(kind, "low"),
                     "where": where, "offset": offset, "evidence": ev})
 
-    for inv in INVISIBLE:
-        idx = raw.find(inv)
-        if idx >= 0:
-            add("bidi_override" if inv in BIDI else "invisible_text",
-                f"U+{ord(inv):04X} at {idx}", idx)
-            break
+    hits = [(inv, raw.find(inv)) for inv in INVISIBLE if inv in raw]
+    if hits:
+        # Report every kind, not just the first one found: a payload that mixes a
+        # zero-width space with a bidi override is exactly the case worth seeing,
+        # and "one finding" reads like a single stray character.
+        first, first_idx = min(hits, key=lambda kv: kv[1])
+        kinds = ", ".join(f"U+{ord(cp):04X}" for cp, _ in sorted(hits, key=lambda kv: kv[1]))
+        evidence = f"U+{ord(first):04X} at {first_idx}"
+        if len(hits) > 1:
+            evidence += f"（共 {len(hits)} 种不可见字符: {kinds}）"
+        add("bidi_override" if first in BIDI else "invisible_text", evidence, first_idx)
     if ANSI_RE.search(raw):
         add("ansi_escape", ANSI_RE.search(raw).group(0)[:40])
     for kind, rx in INJECTION_PATTERNS:

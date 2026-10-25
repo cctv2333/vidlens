@@ -418,8 +418,17 @@ def _audio_duration_ok(path: Path, expected: float) -> bool:
     return got > 0 and abs(got - expected) <= max(5.0, expected * 0.02)
 
 
+def _has_video_stream(path: Path) -> bool:
+    """True when the container carries a real video stream (not just audio)."""
+    try:
+        _rc, _so, se = core().run(["-i", str(path)])
+    except Exception:
+        return False
+    return bool(re.search(r"Stream #\d+:\d+.*?: Video:", se or ""))
+
+
 def download_audio(url: str, d: Path, max_mb: float, force: bool,
-                   expected_dur: float = 0.0) -> Path:
+                   expected_dur: float = 0.0, notes: list | None = None) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     # reuse what we already have: re-downloading 26MB for nothing is rude to the site
     existing = [p for p in d.glob("audio.*") if p.suffix.lower() in AUDIO_EXT
@@ -439,6 +448,11 @@ def download_audio(url: str, d: Path, max_mb: float, force: bool,
     if mb > max_mb and not force:
         f.unlink(missing_ok=True)
         raise SystemExit(f"audio is {mb:.1f}MB > --max-mb {max_mb}. Use --force if you really want it.")
+    if notes is not None and _has_video_stream(f):
+        # `ba/b` fell through to the combined format: the site has no audio-only
+        # track, so "only the bytes we need" did not hold this time. Say so instead
+        # of letting the caller believe 16MB of mp4 was a 300KB m4a.
+        notes.append(f"该站没有纯音轨，回退下载了整段视频（{mb:.1f}MB）")
     return f
 
 
@@ -447,10 +461,27 @@ def fmt_t(t: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
+def video_selector(height: int) -> str:
+    """yt-dlp chain for "some video, at most `height` tall".
+
+    The trailing `/bv*/b` is not decoration: a direct MP4 (or some AcFun items)
+    exposes one combined format with no `height` field, so every height-filtered
+    branch matches nothing and yt-dlp refuses the whole download -- which then
+    takes shot-cut scanning and clip cutting down with it.
+    """
+    return f"bv*[height<={height}]/b[height<={height}]/bv*/b"
+
+
+def section_selector(height: int, with_audio: bool) -> str:
+    """Format chain for a cut-out section; same fallback rule as video_selector."""
+    if with_audio:
+        return f"bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b/b"
+    return video_selector(height)
+
+
 def section_args(t0: float, t1: float, height: int, with_audio: bool) -> list[str]:
-    v = f"bv*[height<={height}]"
-    f = f"{v}+ba/b[height<={height}]" if with_audio else f"{v}/b[height<={height}]"
-    return ["-f", f, "--download-sections", f"*{fmt_t(t0)}-{fmt_t(t1)}",
+    return ["-f", section_selector(height, with_audio),
+            "--download-sections", f"*{fmt_t(t0)}-{fmt_t(t1)}",
             "--force-keyframes-at-cuts"]
 
 
@@ -458,7 +489,7 @@ def download_video_lowest(url: str, d: Path, height: int = 360) -> Path:
     """Video-only, lowest usable resolution. Only for shot-cut scanning."""
     d.mkdir(parents=True, exist_ok=True)
     ffdir = core().ffmpeg_dir()
-    rc, out, err = run_yt(["-f", f"bv*[height<={height}]/b[height<={height}]",
+    rc, out, err = run_yt(["-f", video_selector(height),
                            "--ffmpeg-location", ffdir,
                            "-o", str(d / "video.%(ext)s"), url])
     cands = [p for p in d.glob("video.*") if p.suffix.lower() in (".mp4", ".mkv", ".webm")]

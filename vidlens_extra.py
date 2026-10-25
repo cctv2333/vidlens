@@ -106,6 +106,25 @@ def _run(cmd, timeout=30):
         return -1, str(e)
 
 
+def _api_reachable(status: int, body: str) -> tuple:
+    """Is the API really answering, or is this a risk-control / captcha page?
+
+    Bilibili's WAF answers 200 with an HTML challenge, so a status-only check
+    reports "network ok" while every real request is blocked. Anonymous access to
+    /nav answers code=-101 ("not logged in") -- that still proves the API itself
+    replied, so any integer `code` counts as reachable.
+    """
+    if status != 200:
+        return False, f"http {status}"
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return False, f"http {status}，但响应不是 JSON（可能被风控/验证码拦截）"
+    if isinstance(payload, dict) and isinstance(payload.get("code"), int):
+        return True, f"http {status} code={payload['code']}"
+    return False, f"http {status}，但响应里没有 code 字段"
+
+
 def doctor() -> list[dict]:
     rows = []
 
@@ -156,7 +175,9 @@ def doctor() -> list[dict]:
         req = urllib.request.Request("https://api.bilibili.com/x/web-interface/nav",
                                      headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=10) as r:
-            add("network: bilibili api", r.status == 200, f"http {r.status}")
+            status, body = r.status, r.read(4096).decode("utf-8", "replace")
+        ok, detail = _api_reachable(status, body)
+        add("network: bilibili api", ok, detail)
     except Exception as e:
         add("network: bilibili api", False, str(e)[:80])
     return rows

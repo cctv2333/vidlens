@@ -177,8 +177,10 @@ def _rows_with_media(url: str, d: Path, lang: str, model: str, refresh: bool,
                 indent=1), encoding="utf-8")
             return meta, rows, web.read_pauses(d), f"subs({sub_name})"
 
+        notes: list[str] = []
         media = web.download_audio(url, d, MAX_AUDIO_MB, False,
-                                   expected_dur=float(meta.get("duration") or 0))
+                                   expected_dur=float(meta.get("duration") or 0),
+                                   notes=notes)
         mb = media.stat().st_size / BYTES_PER_MB
         cb = None
         if progress:
@@ -190,6 +192,8 @@ def _rows_with_media(url: str, d: Path, lang: str, model: str, refresh: bool,
             info["source"] = f"asr(audio {mb:.1f}MB, model={model})"
         else:
             info["source"] = f"asr({backend}, audio {mb:.1f}MB)"
+        if notes:
+            info["source"] += "；" + "；".join(notes)
         _annotate_rows(rows)
         _save_rows(d, rows)
         (d / "speech_info.json").write_text(
@@ -202,16 +206,25 @@ def _rows_with_media(url: str, d: Path, lang: str, model: str, refresh: bool,
 
 
 def _clamp_range(meta: dict, t0: float, t1: float) -> tuple[float, float]:
-    """Keep requested windows inside the video. Returns (t0, t1)."""
-    dur = float(meta.get("duration") or 0)
-    t0, t1 = max(0.0, float(t0)), max(0.0, float(t1))
-    if dur and t0 >= dur:
-        raise ValueError(f"start {core.hms(t0)} 超出视频时长 {core.hms(dur)}")
-    if dur and t1 > dur:
-        t1 = dur
-    if t1 <= t0:
-        raise ValueError("end 必须晚于 start（且不能超出视频时长）")
-    return t0, t1
+    """Keep requested windows inside the video. Returns (t0, t1).
+
+    The rule itself lives in ``core.clamp_range`` so the CLI enforces exactly the
+    same thing (it used to silently accept a reversed range and write a junk file).
+    """
+    return core.clamp_range(t0, t1, float(meta.get("duration") or 0))
+
+
+def _t(v) -> str:
+    """Coerce a time argument to something ``core.parse_t`` accepts.
+
+    The schema says "seconds or MM:SS", but a model (or a direct library caller)
+    sending ``90`` used to reach ``s.strip()`` and die with an AttributeError.
+    """
+    if isinstance(v, bool):
+        raise ValueError("时间参数必须是秒数或 MM:SS 字符串")
+    if isinstance(v, (int, float)):
+        return repr(float(v))
+    return str(v)
 
 
 def _skim_notice(url: str, meta: dict) -> str:
@@ -360,11 +373,17 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
             meta, rows, gaps, source = _rows_with_media(url, d, lang, model, refresh,
                                                         prompt=prompt)
             cuts = []
+            scan_error = ""
             if scan_cuts:
-                with _MEDIA_LOCK:
-                    vid = web.download_video_lowest(url, d, SCAN_HEIGHT)
-                    cuts = web.shot_cuts(vid, CUT_THRESHOLD)
-                    vid.unlink(missing_ok=True)
+                # A cut scan is a bonus chapter source. It used to be able to sink
+                # the whole brief after the (already paid for) ASR was on disk.
+                try:
+                    with _MEDIA_LOCK:
+                        vid = web.download_video_lowest(url, d, SCAN_HEIGHT)
+                        cuts = web.shot_cuts(vid, CUT_THRESHOLD)
+                        vid.unlink(missing_ok=True)
+                except (SystemExit, Exception) as e:  # noqa: B014 - one outcome for both
+                    scan_error = str(e)
             threats = []
             for k in ("title", "description"):
                 threats += S.scan(meta.get(k) or "", where=k)
@@ -376,6 +395,9 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
         with _MEDIA_LOCK:
             (d / "brief.md").write_text(brief, encoding="utf-8")
         extra = f"\n\n[已保存] {d / 'brief.md'}"
+        if scan_error:
+            extra += (f"\n[注意] 镜头切点扫描失败（{scan_error[:120]}），报告里没有 cuts；"
+                      "台词与章节不受影响。")
         return brief[:MAX_BRIEF_CHARS] + extra
     except SystemExit as e:
         return f"ERROR: {e}"
@@ -445,14 +467,14 @@ def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
 
 
 @mcp.tool()
-def video_window(url: str, start: str = "0", end: str = "60", lang: str = "zh",
+def video_window(url: str, start: str | float = "0", end: str | float = "60", lang: str = "zh",
                  model: str = "small", prompt: str = "") -> str:
     """只看某个时间窗：该窗内的台词（带时间码）与停顿。
     有缓存/平台字幕则零下载；否则只下该窗口的音频做 ASR，不转写全片。
     方言可传 lang=yue / prompt=...。适合"刚才那 30 秒他说了什么"，也是长视频抽样的主力工具。"""
     try:
         with _LOCK:
-            t0, t1 = core.parse_t(start), core.parse_t(end)
+            t0, t1 = core.parse_t(_t(start)), core.parse_t(_t(end))
             meta, d = _dir(url)
             t0, t1 = _clamp_range(meta, t0, t1)
             rows, gaps, source = _rows_for_window(url, d, meta, t0, t1, lang, model,
@@ -475,13 +497,13 @@ def video_window(url: str, start: str = "0", end: str = "60", lang: str = "zh",
 
 
 @mcp.tool()
-def video_audio(url: str, start: str = "0", end: str = "20", lang: str = "zh") -> str:
+def video_audio(url: str, start: str | float = "0", end: str | float = "20", lang: str = "zh") -> str:
     """听一段：本地 SenseVoice 的语种/情感/音频事件 + 节拍/能量（近似）。
     只下这一段音频（20 秒约 0.5MB），不转写全片。节拍估计对纯语音段意义有限，
     对音乐/剪辑节奏更有用；情感/事件是模型标签，不是事实判断。"""
     try:
         with _LOCK:
-            t0, t1 = core.parse_t(start), core.parse_t(end)
+            t0, t1 = core.parse_t(_t(start)), core.parse_t(_t(end))
             meta, d = _dir(url)
             t0, t1 = _clamp_range(meta, t0, t1)
             tmp = Path(tempfile.mkdtemp(dir=str(d), prefix="aud_"))
@@ -565,7 +587,7 @@ def _format_soundscape(t0: float, t1: float, res: dict) -> str:
 
 
 @mcp.tool()
-def video_soundscape(url: str, start: str = "0", end: str = "60", top_k: int = 8,
+def video_soundscape(url: str, start: str | float = "0", end: str | float = "60", top_k: int = 8,
                      min_prob: float = 0.15, window: float = 10.0,
                      hop: float = 5.0) -> str:
     """听这一段"有什么声音"（不是"说了什么"）：AudioSet 527 类多标签 + 概率 + 时间码。
@@ -575,7 +597,7 @@ def video_soundscape(url: str, start: str = "0", end: str = "60", top_k: int = 8
         if not ae.available():
             return ae.install_hint()
         with _LOCK:
-            t0, t1 = core.parse_t(start), core.parse_t(end)
+            t0, t1 = core.parse_t(_t(start)), core.parse_t(_t(end))
             meta, d = _dir(url)
             t0, t1 = _clamp_range(meta, t0, t1)
             tmp = Path(tempfile.mkdtemp(dir=str(d), prefix="snd_"))
@@ -601,7 +623,7 @@ def video_soundscape(url: str, start: str = "0", end: str = "60", top_k: int = 8
 
 
 @mcp.tool()
-def video_sheet(url: str, start: str = "0", end: str = "20",
+def video_sheet(url: str, start: str | float = "0", end: str | float = "20",
                 cols: int = 4, rows: int = 3, height: int = 360) -> list:
     """只下载这一段（例如 20 秒 ≈ 0.9MB），返回一张拼图，每格左上角烧着绝对时间码。
     用于"看一眼这段画面在发生什么"。"""
@@ -609,7 +631,7 @@ def video_sheet(url: str, start: str = "0", end: str = "20",
         cols = max(1, min(MAX_SHEET_COLS, int(cols)))
         rows = max(1, min(MAX_SHEET_ROWS, int(rows)))
         with _LOCK:
-            t0, t1 = core.parse_t(start), core.parse_t(end)
+            t0, t1 = core.parse_t(_t(start)), core.parse_t(_t(end))
             meta, d = _dir(url)
             t0, t1 = _clamp_range(meta, t0, t1)
             outd = d / f"sheet_{int(t0)}_{int(t1)}"

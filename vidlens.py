@@ -55,18 +55,37 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 # ---------------------------------------------------------------- ffmpeg glue
 
-MODEL_DIRS = [
-    os.environ.get("VIDLENS_MODEL_DIR"),
-    r"D:\dev\models\whisper",
-    str(Path.home() / ".cache" / "whisper"),
-]
+# Windows checkouts keep the weights on D:. On POSIX that literal path is not a
+# real location -- creating it would put a directory named `D:\dev\models\whisper`
+# in the CWD, after which it exists, wins over ~/.cache/whisper forever and the
+# real cache is invisible. So the Windows path is only offered on Windows.
+_WIN_MODEL_DIR = r"D:\dev\models\whisper"
+
+
+def _model_dirs(platform: str | None = None) -> list:
+    """Candidate model dirs, in priority order.
+
+    ``platform`` defaults to ``os.name``; it exists as a parameter so the POSIX
+    rule below can be tested from Windows (where it cannot be reproduced).
+    """
+    plat = os.name if platform is None else platform
+    return [
+        os.environ.get("VIDLENS_MODEL_DIR"),
+        _WIN_MODEL_DIR if plat == "nt" else None,
+        str(Path.home() / ".cache" / "whisper"),
+    ]
+
+
+MODEL_DIRS = _model_dirs()
 
 
 def model_dir() -> str:
-    for d in MODEL_DIRS:
+    """First existing model dir, else create the platform default and use it."""
+    dirs = _model_dirs()
+    for d in dirs:
         if d and Path(d).exists():
             return d
-    fallback = Path(MODEL_DIRS[1] if not MODEL_DIRS[0] else MODEL_DIRS[0])
+    fallback = Path(dirs[0] or dirs[-1])
     fallback.mkdir(parents=True, exist_ok=True)
     return str(fallback)
 
@@ -129,6 +148,24 @@ def parse_t(s: str) -> float:
             v = v * 60 + p
         return v
     return float(s)
+
+
+def clamp_range(t0: float, t1: float, dur: float = 0.0) -> tuple:
+    """Validate a [t0, t1) window; shared by the CLI and vl_mcp.
+
+    Without this the CLI happily accepted `--from 20 --to 5` and wrote
+    `sheet_20000_5000.jpg` -- a garbage file with a perfectly normal looking name.
+    `dur` is optional: when the media length is unknown only the ordering and the
+    non-negativity are enforced.
+    """
+    t0, t1 = max(0.0, float(t0)), max(0.0, float(t1))
+    if dur and t0 >= dur:
+        raise ValueError(f"start {hms(t0)} 超出视频时长 {hms(dur)}")
+    if dur and t1 > dur:
+        t1 = float(dur)
+    if t1 <= t0:
+        raise ValueError(f"end 必须晚于 start（得到 {hms(t0)} -> {hms(t1)}）")
+    return t0, t1
 
 
 # ------------------------------------------------------------------- commands
@@ -247,6 +284,12 @@ def cmd_shots(a):
 def grab_at(video, ts, d: Path, width: int, q: int):
     made = []
     for t in ts:
+        if t < 0:
+            # ffmpeg treats a negative -ss as "before the file", silently yields
+            # frame 0, and the name loses its padding (`t-00005000ms.jpg`), which
+            # then sorts wrong next to the real frames.
+            print(f"skip {t:g}s (negative timestamp)")
+            continue
         name = d / f"t{int(round(t*1000)):09d}ms.jpg"
         rc, so, se = run(["-ss", f"{t:.3f}", "-i", video, "-frames:v", "1",
                           "-vf", f"scale={width}:-2", "-q:v", str(q), "-y", str(name)])
@@ -262,8 +305,8 @@ def cmd_frames(a):
         ts = [parse_t(x) for x in a.at.split(",") if x.strip()]
         made = grab_at(a.video, ts, d, a.width, a.q)
     else:
-        start, end = parse_t(a.start), parse_t(a.end)
-        dur = max(0.0, end - start)
+        start, end = clamp_range(parse_t(a.start), parse_t(a.end))
+        dur = end - start
         n = max(1, int(round(dur * a.fps)) + 1)
         tmp = Path(tempfile.mkdtemp())
         rc, so, se = run(["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", a.video,
@@ -316,9 +359,9 @@ def has_drawtext() -> bool:
 
 def cmd_sheet(a):
     d = outdir(Path(a.video), a.out)
-    start, end = parse_t(a.start), parse_t(a.end)
+    start, end = clamp_range(parse_t(a.start), parse_t(a.end))
     offset = float(getattr(a, "offset", 0) or 0)
-    dur = max(0.001, end - start)
+    dur = end - start
     fps = max(0.05, (a.cols * a.rows - 1) / dur)
     # -ss 会让 pts 从 0 重新计时，必须把绝对时间加回去，否则烧进画面的时间码是错的
     vf = f"setpts=PTS+{start + offset:.3f}/TB,fps={fps:.4f},scale={a.width}:-2"
@@ -681,9 +724,13 @@ def main():
 
     a = ap.parse_args()
 
-    if False:
-        pass
-    a.f(a)
+    try:
+        a.f(a)
+    except ValueError as e:
+        # Bad user input (unparsable time, reversed range). One readable line
+        # beats the bare traceback that `parse_t("abc")` used to produce.
+        print(f"error: {e}", file=sys.stderr)
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
