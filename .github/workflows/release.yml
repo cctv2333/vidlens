@@ -52,7 +52,6 @@ jobs:
           path: dist
 
       - uses: pypa/gh-action-pypi-publish@release/v1
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           print-hash: true
