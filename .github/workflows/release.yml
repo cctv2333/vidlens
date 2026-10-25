@@ -52,8 +52,10 @@ jobs:
           path: dist
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+        # Trusted Publishing (OIDC): no long-lived token. Requires a publisher on
+        # https://pypi.org/manage/project/vidlens-mcp/settings/publishing/ with
+        # owner=cctv2333, repo=vidlens, workflow=release.yml, environment=pypi.
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           print-hash: true
 
   release:

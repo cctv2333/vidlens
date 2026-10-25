@@ -329,7 +329,7 @@ AudioSet 窗口切分与时间码不漂移、跨进程文件锁。
 git tag v1.4.0 && git push origin v1.4.0
 ```
 
-`release.yml` 构建 sdist + wheel、上传 PyPI（需要仓库 secret `PYPI_API_TOKEN`；
+`release.yml` 构建 sdist + wheel、通过 **Trusted Publishing（OIDC）** 上传 PyPI（不需要任何长期 token；一次性 publisher 配置见 `RELEASING.md`）；
 也可改用 PyPI Trusted Publishing）、并附到 GitHub Release。
 
 ## 已知坑（都是实测踩过的）
