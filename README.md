@@ -1,7 +1,7 @@
 # vidlens
 
 [![ci](https://github.com/cctv2333/vidlens/actions/workflows/ci.yml/badge.svg)](https://github.com/cctv2333/vidlens/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/vidlens-mcp.svg)](https://pypi.org/project/vidlens-mcp/)
+[![PyPI](https://img.shields.io/pypi/v/vidlens-mcp.svg?cacheSeconds=600)](https://pypi.org/project/vidlens-mcp/)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 把一个**公开可看**的视频，降解成「模型能真正读懂的证据表」。
