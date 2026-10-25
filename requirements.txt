@@ -1,0 +1,9 @@
+faster-whisper>=1.0.3
+imageio-ffmpeg>=0.5.1
+numpy>=1.24
+yt-dlp>=2024.1.1
+# optional local SenseVoice backend (used when its model+tokens exist)
+sherpa-onnx>=2.0.0,<3
+# av is imported by faster-whisper; vidlens bypasses its decoder (av>=14 removed metadata_errors)
+# Keep below 19: faster-whisper's own transcribe() still calls the removed kwarg.
+av>=11,<19

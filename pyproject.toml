@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vidlens-mcp"
+version = "1.4.0"
+description = "Turn a public video into an evidence table an LLM can read: timecoded transcript, sampling sheets and AudioSet sound events, downloading only the bytes it needs."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "cctv2333" }]
+keywords = ["video", "asr", "mcp", "llm", "whisper", "sensevoice", "audioset", "yt-dlp"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Text Processing",
+]
+dependencies = [
+  "mcp>=2.3,<3",
+  "yt-dlp>=2024.1.1",
+  "imageio-ffmpeg>=0.5.1",
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# Local ASR backends. SenseVoice is the default when a model + tokens exist.
+sensevoice = ["sherpa-onnx>=2.0.0,<3"]
+whisper = ["faster-whisper>=1.0.3", "av>=11,<19"]
+# AudioSet sound events (chewing / knock / water) also use sherpa-onnx.
+audioevents = ["sherpa-onnx>=2.0.0,<3"]
+all = ["sherpa-onnx>=2.0.0,<3", "faster-whisper>=1.0.3", "av>=11,<19"]
+
+[project.scripts]
+vidlens = "vidlens:main"
+vidlens-mcp = "vl_mcp:main"
+
+[project.urls]
+Homepage = "https://github.com/cctv2333/vidlens"
+Repository = "https://github.com/cctv2333/vidlens"
+Issues = "https://github.com/cctv2333/vidlens/issues"
+# The DeepSeek Harness plugin lives in its own repository:
+# https://github.com/cctv2333/dsh-vidlens
+
+[tool.setuptools]
+# Flat module layout: the project has always been `python vidlens.py`, and the
+# modules import each other by bare name. Installing them as py-modules keeps
+# that working without a package rename.
+py-modules = [
+  "vl_mcp",
+  "vidlens",
+  "vidlens_ads",
+  "vidlens_audio",
+  "vidlens_audioevents",
+  "vidlens_extra",
+  "vidlens_models",
+  "vidlens_sanitize",
+  "vidlens_sensevoice",
+  "vidlens_web",
+]

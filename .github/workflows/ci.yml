@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONIOENCODING: utf-8
+  HF_HUB_DISABLE_XET: "1"
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }} · py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: install (no ASR backends; the suite must not need them)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: unit tests (offline; network cases stay skipped)
+        run: python -m unittest discover -s tests -v
+
+      - name: doctor-style import smoke
+        run: python -c "import vidlens, vidlens_web, vidlens_audioevents, vl_mcp; print('out_root =', vidlens_web.out_root()); print('project_root =', vidlens.project_root())"
+
+  package:
+    name: wheel builds and imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: build
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: the wheel contains the MCP server and both console scripts
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          z = zipfile.ZipFile(wheel)
+          names = z.namelist()
+          for need in ("vl_mcp.py", "vidlens.py", "vidlens_audioevents.py", "vidlens_web.py"):
+              assert need in names, f"missing in wheel: {need}"
+          dist_info = {n.split("/")[0] for n in names if ".dist-info/" in n}
+          assert len(dist_info) == 1, dist_info
+          info = dist_info.pop()
+          eps = z.read(f"{info}/entry_points.txt").decode()
+          assert "vidlens-mcp = vl_mcp:main" in eps, eps
+          assert "vidlens = vidlens:main" in eps, eps
+          assert any(n.endswith("licenses/LICENSE") for n in names), "LICENSE not packaged"
+          print("wheel ok:", wheel, len(names), "members")
+          PY
+
+      - name: installed mode writes to the user data dir, not site-packages
+        run: |
+          python -m pip install --no-deps --target /tmp/vl dist/*.whl
+          cd /tmp && PYTHONPATH=/tmp/vl python - <<'PY'
+          import pathlib, vidlens, vidlens_web
+          out = pathlib.Path(vidlens_web.out_root())
+          home = pathlib.Path.home()
+          assert str(out).startswith(str(home)) or "vidlens" in str(out).lower(), out
+          assert "site-packages" not in str(out), out
+          print("installed mode ok:", vidlens.project_root(), "->", out)
+          PY

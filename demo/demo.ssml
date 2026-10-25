@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN">
+  <voice name="Microsoft Huihui Desktop">
+    <prosody rate="-5%">各位下午好，这次会议我主要讲三件事。</prosody>
+    <break time="700ms"/>
+    <prosody rate="-5%">第一，上季度营收一千二百四十万，比去年同期下降百分之八。</prosody>
+    <break time="900ms"/>
+    <prosody rate="-5%">第二，计划在宁波新建一条产线，投资三千五百万。</prosody>
+    <break time="2200ms"/>
+    <prosody rate="-5%">第三……第三点我先讲到这儿，剩下的会后单独沟通。</prosody>
+  </voice>
+</speak>

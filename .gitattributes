@@ -1,0 +1,20 @@
+# Keep Windows launchers CRLF (the project's own rule: .cmd must be CRLF).
+* text=auto
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+
+# Media stays binary.
+*.mp4 binary
+*.wav binary
+*.ssml text eol=lf
+*.jpg binary
+*.png binary
+*.zip binary

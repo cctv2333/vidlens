@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "vidlens": {
+      "command": "<PROJECT>\\.venv\\Scripts\\python.exe",
+      "args": ["<PROJECT>\\vl_mcp.py"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "HF_HUB_DISABLE_XET": "1",
+        "HF_ENDPOINT": "https://hf-mirror.com"
+      }
+    }
+  }
+}
