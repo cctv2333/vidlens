@@ -332,6 +332,10 @@ git tag v1.4.0 && git push origin v1.4.0
 `release.yml` 构建 sdist + wheel、通过 **Trusted Publishing（OIDC）** 上传 PyPI（不需要任何长期 token；一次性 publisher 配置见 `RELEASING.md`）；
 也可改用 PyPI Trusted Publishing）、并附到 GitHub Release。
 
+## 路线图
+
+已做 / 未做 / 验收标准 / 不做清单：[ROADMAP.md](ROADMAP.md)。
+
 ## 已知坑（都是实测踩过的）
 
 1. **`av` 版本**：faster-whisper 1.2.1 用 `av.open(metadata_errors=...)`，av 19 已删该参数。
