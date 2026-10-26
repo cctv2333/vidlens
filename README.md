@@ -114,7 +114,7 @@ Windows 用 `vl.cmd`，其余平台用 `.venv/bin/python vidlens.py`。
 | `video_meta(url)` | 0 | 标题/UP主/时长/播放/是否有字幕 |
 | `video_plan(url, window=300)` | 0 | 按切点/长静音分章节 + 建议顺序；长视频先调它 |
 | `video_subs(url, lang=zh)` | 0 | 平台字幕（人工优先，其次自动），带时间码 |
-| `video_brief(url, ..., full=False)` | 平台字幕 0；无字幕才下音频 | 完整报告；>20 分钟且无字幕时默认只给章节，`full=true` 才全量 |
+| `video_brief(url, ..., level="digest")` | 平台字幕 0；无字幕才下音频 | **摘要**（默认，约 1.5k 字：章节 + 5 句关键台词 + 全文路径）；`level="full"` 才给 6–9k 字完整报告；>20 分钟且无字幕时默认只给章节，`full=true` 才全量 |
 | `video_window(url, start, end)` | 0（有缓存时） | 某时间窗的台词与停顿 |
 | `video_full(url, confirm=True)` | 整片 | 必须显式确认 |
 

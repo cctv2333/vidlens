@@ -70,6 +70,15 @@ _JOB_START_LOCK = threading.Lock()
 _JOBS_BY_URL: dict[str, str] = {}
 MAX_IMAGES = 6
 MAX_BRIEF_CHARS = 9000
+# The digest is what the model gets by default. The full report is 6-9k chars
+# (~4-6k tokens) and every one of them stays in the conversation for the rest of
+# the session, so "one call = the whole report" is the wrong contract for an
+# agent loop. The digest answers "what is this video", the full text stays on
+# disk and is one explicit call away.
+MAX_DIGEST_CHARS = 1600
+MAX_DIGEST_CHAPTERS = 8
+MAX_DIGEST_LINES = 5
+MAX_WINDOW_LINES = 80
 MAX_AUDIO_MB = 200.0
 CUT_THRESHOLD = 0.25
 SCAN_HEIGHT = 360
@@ -357,8 +366,10 @@ def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
 @mcp.tool()
 def video_brief(url: str, lang: str = "zh", model: str = "small",
                 scan_cuts: bool = False, refresh: bool = False,
-                full: bool = False, prompt: str = "") -> str:
-    """完整证据报告：平台字幕优先（0 媒体下载），无字幕才下音频做 ASR。
+                full: bool = False, prompt: str = "", level: str = "digest") -> str:
+    """看一个视频：默认给摘要（章节 + 关键句 + 全文路径，约 1.5k 字），
+    需要完整报告才传 level="full"（6–9k 字，会长期占用上下文，慎用）。
+    平台字幕优先（0 媒体下载），无字幕才下音频做 ASR。
     长视频（>20 分钟且无字幕）默认只给章节建议，不逐字转写；确实要全量传 full=true。
     方言可传 lang=yue 等，或 prompt="以下是粤语，请保留方言用词"。
     需要看画面再用 video_sheet / video_frames，不要下整片。"""
@@ -398,11 +409,57 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
         if scan_error:
             extra += (f"\n[注意] 镜头切点扫描失败（{scan_error[:120]}），报告里没有 cuts；"
                       "台词与章节不受影响。")
-        return brief[:MAX_BRIEF_CHARS] + extra
+        if str(level or "").lower() == "full":
+            return brief[:MAX_BRIEF_CHARS] + extra
+        return _digest(meta, rows, dur, chapters, threats, source, brief, d) + extra
     except SystemExit as e:
         return f"ERROR: {e}"
     except Exception as e:
         return _err(e)
+
+
+def _digest(meta: dict, rows: list, dur: float, chapters: list, threats: list,
+            source: str, brief: str, d: Path) -> str:
+    """Small, stable summary: shape, chapters, evenly sampled lines, where the rest is.
+
+    Sampling instead of "pick the longest sentences": five evenly spread anchors
+    tell a reader what the video does, while the digest stays under ~1.5k chars.
+    """
+    L = [f"# {meta.get('title') or meta.get('id') or 'video'}"]
+    L.append(f"{meta.get('id')} · {core.hms(dur)} · {meta.get('extractor')} · "
+             f"转写: {source or 'n/a'}")
+    speech = sum(max(0.0, r["t1"] - r["t0"]) for r in rows
+                 if (r.get("text") or "").strip())
+    if rows and dur:
+        cover = speech / dur * 100
+        tail = "（大量无词段落，信息可能在画面 —— 用 video_sheet 抽看）" if cover < 50 else ""
+        L.append(f"语音覆盖 {cover:.0f}%{tail}")
+    if threats:
+        L.append(f"风险: {len(threats)} 条（{S.level(threats)}），逐条见全文")
+    if chapters and len(chapters) > 1:
+        L.append("")
+        L.append("## 分步看（按顺序，不要一次看全片）")
+        for x in chapters[:MAX_DIGEST_CHAPTERS]:
+            L.append(f"- `{core.hms(x['from'])}` → `{core.hms(x['to'])}`")
+        if len(chapters) > MAX_DIGEST_CHAPTERS:
+            L.append(f"- …另有 {len(chapters) - MAX_DIGEST_CHAPTERS} 段")
+    picked: list = []
+    if rows and dur:
+        for i in range(MAX_DIGEST_LINES):
+            t = dur * (i + 0.5) / MAX_DIGEST_LINES
+            near = min(rows, key=lambda r: abs(r["t0"] - t))
+            if (near.get("text") or "").strip() and near not in picked:
+                picked.append(near)
+    if picked:
+        L.append("")
+        L.append("## 关键句（均匀取样，带时间码）")
+        for r in picked:
+            L.append(f"- `{core.hms(r['t0'])}` {S.clean(r['text'], 110)}")
+    L.append("")
+    L.append(f"全文 {len(brief)} 字：{d / 'brief.md'}")
+    L.append('要细节别再整份重跑：`video_window(start,end)` 读某段台词 · '
+             '`video_sheet` 看某段画面 · `video_brief(level="full")` 才给全文')
+    return "\n".join(L)[:MAX_DIGEST_CHARS]
 
 
 def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
@@ -481,6 +538,8 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
                                                   prompt=prompt)
         sel = [r for r in rows if r["t1"] >= t0 and r["t0"] <= t1]
         gsel = [g for g in gaps if g["t1"] >= t0 and g["t0"] <= t1]
+        overflow = max(0, len(sel) - MAX_WINDOW_LINES)
+        sel = sel[:MAX_WINDOW_LINES]
         out = [f"# {core.hms(t0)} → {core.hms(t1)}  ({source})", ""]
         if not sel:
             out.append("- 该区间没有识别到语音（可能是音乐/静音/无词段落）")
@@ -489,6 +548,9 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
         if gsel:
             out.append("")
             out.append("停顿：" + ", ".join(f"{core.hms(g['t0'])}/{g['dur']:.2f}s" for g in gsel))
+        if overflow:
+            out.append("")
+            out.append(f"- …还有 {overflow} 行没列出（分几次看，或把 start/end 缩小）")
         return "\n".join(out)
     except SystemExit as e:
         return f"ERROR: {e}"
@@ -799,7 +861,10 @@ def _do_brief_locked(progress, url, lang, model, scan_cuts, comments, full, prom
     progress('write', 92)
     with _MEDIA_LOCK:
         (d / 'brief.md').write_text(brief, encoding='utf-8')
-    return brief[:MAX_BRIEF_CHARS]
+    if full:
+        # The caller explicitly asked to transcribe everything; give it the report.
+        return brief[:MAX_BRIEF_CHARS]
+    return _digest(meta, rows, dur, chapters, threats, source, brief, d)
 
 
 @mcp.tool()

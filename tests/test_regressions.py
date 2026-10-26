@@ -187,5 +187,48 @@ class CliErrorTests(unittest.TestCase):
             self.assertNotIn("Traceback", err.getvalue())
 
 
+class OutputBudgetTests(unittest.TestCase):
+    """A full brief is 6-9k chars and stays in context for the rest of the session.
+
+    The default must therefore be a digest; "the whole report" has to be an
+    explicit, expensive choice. Without this the agent overflows its window after
+    a couple of videos and the user sees "context limit exceeded".
+    """
+
+    @staticmethod
+    def _fixture():
+        rows = [{"t0": float(i * 10), "t1": float(i * 10 + 9),
+                 "text": f"第{i}段台词内容，用来占位。" * 6} for i in range(100)]
+        chapters = [{"from": i * 100.0, "to": (i + 1) * 100.0} for i in range(10)]
+        return rows, chapters
+
+    def _digest(self):
+        rows, chapters = self._fixture()
+        return M._digest({"id": "BV1", "title": "标题", "extractor": "BiliBili"},
+                         rows, 600.0, chapters, [], "asr(cached)", "x" * 9000,
+                         Path("out/BV1"))
+
+    def test_digest_fits_the_budget(self):
+        self.assertLessEqual(len(self._digest()), M.MAX_DIGEST_CHARS)
+
+    def test_digest_points_at_the_full_report(self):
+        text = self._digest()
+        self.assertIn("brief.md", text)
+        self.assertIn('level="full"', text)
+        self.assertIn("9000", text)
+
+    def test_digest_is_at_least_four_times_smaller(self):
+        self.assertLess(len(self._digest()), 9000 / 4)
+
+    def test_brief_defaults_to_digest(self):
+        import inspect
+        default = inspect.signature(M.video_brief).parameters["level"].default
+        self.assertEqual(default, "digest")
+
+    def test_window_has_a_row_cap(self):
+        self.assertGreaterEqual(M.MAX_WINDOW_LINES, 20)
+        self.assertLessEqual(M.MAX_WINDOW_LINES, 200)
+
+
 if __name__ == "__main__":
     unittest.main()
