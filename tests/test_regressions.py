@@ -229,6 +229,17 @@ class OutputBudgetTests(unittest.TestCase):
         self.assertGreaterEqual(M.MAX_WINDOW_LINES, 20)
         self.assertLessEqual(M.MAX_WINDOW_LINES, 200)
 
+    def test_clipping_never_drops_the_how_to_continue_line(self):
+        # A blind [:limit] slice could cut the line that says what to call next,
+        # leaving a truncated reply with no way forward.
+        lines = ["head"] + [f"body line {i} " + "x" * 80 for i in range(40)] \
+            + ["tail: 全文在 brief.md", "tail: 要细节用 video_window"]
+        out = M._fit(lines, 400, tail=2)
+        self.assertLessEqual(len(out), 460)
+        self.assertIn("brief.md", out)
+        self.assertIn("video_window", out)
+        self.assertIn("略去", out)
+
 
 if __name__ == "__main__":
     unittest.main()

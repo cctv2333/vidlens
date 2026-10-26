@@ -461,7 +461,7 @@ def _digest(meta: dict, rows: list, dur: float, chapters: list, threats: list,
     L.append(f"全文 {len(brief)} 字：{d / 'brief.md'}")
     L.append('要细节别再整份重跑：`video_window(start,end)` 读某段台词 · '
              '`video_sheet` 看某段画面 · `video_brief(level="full")` 才给全文')
-    return "\n".join(L)[:MAX_DIGEST_CHARS]
+    return _fit(L, MAX_DIGEST_CHARS, tail=2)
 
 
 def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
@@ -575,6 +575,29 @@ def _watch_write(d: Path, st: dict) -> None:
                                 encoding="utf-8")
 
 
+def _fit(lines: list, limit: int, tail: int = 2) -> str:
+    """Join lines, and when over budget cut from the middle, never the end.
+
+    A blind ``[:limit]`` slice could remove the last line — the one that tells the
+    caller how to continue — which is the most expensive line to lose.
+    """
+    text = "\n".join(lines)
+    if len(text) <= limit or tail <= 0:
+        return text
+    keep = lines[-tail:]
+    head = lines[:-tail]
+    budget = max(200, limit - len("\n".join(keep)) - 40)
+    out: list = []
+    used = 0
+    for line in head:
+        if used + len(line) + 1 > budget:
+            out.append(f"…（略去 {len(head) - len(out)} 行）")
+            break
+        out.append(line)
+        used += len(line) + 1
+    return "\n".join(out + keep)
+
+
 def _evenly(rows: list, want: int) -> list:
     """Evenly spaced pick; keeps the shape of a segment without dumping all of it."""
     if want <= 0 or len(rows) <= want:
@@ -647,7 +670,7 @@ def video_watch(url: str, minutes: float = 5, cursor: str = "next",
             L.append(f"下一步：先向用户汇报这一段（约 {core.hms(t0)}–{core.hms(t1)}）并问"
                      "「继续看还是先讲这段」；用户说继续再调 "
                      f"video_watch(url, minutes={float(minutes or 5):g})，不要一次拉完。")
-        return "\n".join(L)[:MAX_SEGMENT_CHARS]
+        return _fit(L, MAX_SEGMENT_CHARS, tail=3)
     except SystemExit as e:
         return f"ERROR: {e}"
     except Exception as e:
