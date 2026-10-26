@@ -102,5 +102,50 @@ class McpTests(unittest.TestCase):
         self.assertNotIn("ERROR", txt)
 
 
+DEMO = ROOT / "demo" / "meeting.mp4"
+
+
+class LocalFileTests(unittest.TestCase):
+    """本地路径要能穿过 MCP：不是 URL，也不该被当成 URL。"""
+
+    def _client(self):
+        env = dict(os.environ)
+        env.update({"PYTHONIOENCODING": "utf-8", "HF_HUB_DISABLE_XET": "1"})
+        return Client(StdioServerParameters(command=PY, args=[SRV], env=env))
+
+    @unittest.skipUnless(DEMO.is_file(), "demo/meeting.mp4 不在")
+    def test_local_meta_over_mcp(self):
+        async def go():
+            async with self._client() as c:
+                return await c.call_tool("video_meta", {"url": str(DEMO)})
+        txt = text_of(run(go))
+        self.assertIn("本地文件", txt)
+        self.assertNotIn("ERROR", txt)
+        self.assertNotIn("url scheme", txt)
+
+    @unittest.skipUnless(DEMO.is_file(), "demo/meeting.mp4 不在")
+    def test_local_subs_says_no_platform_captions(self):
+        async def go():
+            async with self._client() as c:
+                return await c.call_tool("video_subs", {"url": str(DEMO)})
+        self.assertIn("本地文件", text_of(run(go)))
+
+    def test_drop_temp_never_deletes_the_source(self):
+        import shutil
+        import tempfile
+        sys.path.insert(0, str(ROOT))
+        import vl_mcp  # noqa: E402
+        tmp = Path(tempfile.mkdtemp(prefix="vl-drop-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        work = tmp / "work.mp4"
+        src = tmp / "src.mp4"
+        work.write_bytes(b"x" * 16)
+        src.write_bytes(b"x" * 16)
+        vl_mcp._drop_temp(work)             # 工作副本：删
+        vl_mcp._drop_temp(src, str(src))    # 用户文件：留
+        self.assertFalse(work.exists())
+        self.assertTrue(src.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

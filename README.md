@@ -83,6 +83,13 @@ vl report a.mp4 --lang zh            # 本地全量 -> brief.md + events.jsonl
 
 Windows 用 `vl.cmd`，其余平台用 `.venv/bin/python vidlens.py`。
 
+**MCP 工具同样吃本地路径**（1.6.0 起，18 个工具全部有效）：`video_meta("D:\\a.mp4")`、
+`video_brief(...)`、`video_ocr(...)` 都可以直接给路径，也认 `file:///D:/a.mp4`、`~/a.mov`、带引号的路径。
+本地文件**不下载、不联网**。以前这里会报 `Unsupported url scheme: "d"`——盘符被当成 URL scheme，
+属于工具层把"输入一定是 URL"写死了（见 BUG_LEDGER B-068）。
+
+本地文件少两样东西，因为那是网站才有的：**平台字幕**（走本地 ASR）和**评论区**（工具会直接说没有，不会编造）。
+
 ## 安全边界（写死在代码里）
 
 **1. 不是白名单，是行为规则。** 没有站点列表，没有域名限制。任何不用登录就能看的页面都可以试。
@@ -105,7 +112,9 @@ Windows 用 `vl.cmd`，其余平台用 `.venv/bin/python vidlens.py`。
 **4. 不信 exit code。** yt-dlp 对失效视频可能"成功"返回空壳，
 `check_meta()` 会校验 id/title/duration，不合格就停。
 
-## MCP 外壳（16 个工具）
+## MCP 外壳（18 个工具）
+
+> `url` 参数既接受公开视频链接，也接受**本地文件路径**（1.6.0 起），例如 `D:\a.mp4` 或 `file:///D:/a.mp4`。
 
 **基础四件**
 

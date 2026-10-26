@@ -52,7 +52,7 @@ import vidlens_web as web
 
 mcp = MCPServer(
     "vidlens",
-    version="1.4.0",
+    version="1.6.0",
     instructions=(
         "按人类看片的习惯工作：先 video_meta（0 下载），再 video_plan（0 下载）看章节，"
         "挑 2-3 段用 video_window / video_sheet；平台字幕优先用 video_subs（0 下载），"
@@ -123,6 +123,21 @@ def _dir(url: str) -> tuple[dict, Path]:
     d = web.out_root() / (meta.get("id") or "unknown")
     d.mkdir(parents=True, exist_ok=True)
     return meta, d
+
+
+def _drop_temp(p: Path, url: str = "") -> None:
+    """Delete a working copy, never the user's own file.
+
+    For a local input ``download_video_lowest`` hands back the source path itself,
+    so a blind ``unlink`` would delete the very movie we were asked to look at.
+    """
+    try:
+        src = web.local_path(url) if url else None
+        if src and Path(p).resolve() == Path(src).resolve():
+            return
+        Path(p).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _load_rows(d: Path) -> list[dict]:
@@ -376,13 +391,26 @@ def video_meta(url: str) -> str:
     try:
         with _LOCK:
             meta, threats = web.fetch_meta(url)
-        lines = [
-            f"id: {meta.get('id')}", f"站点: {meta.get('extractor')}",
-            f"标题: {meta.get('title')}", f"UP主: {meta.get('uploader')}",
-            f"发布: {meta.get('upload_date')}", f"时长: {core.hms(float(meta.get('duration') or 0))}",
-            f"播放/点赞: {meta.get('view_count')} / {meta.get('like_count')}",
-            f"平台字幕: {len(meta.get('has_subs') or [])} 种，自动字幕: {len(meta.get('has_auto_subs') or [])} 种",
-        ]
+        p = web.local_path(url)
+        if p:
+            lines = [
+                f"id: {meta.get('id')}",
+                f"标题: {meta.get('title')}（本地文件）",
+                f"文件: {meta.get('local_path')}",
+                f"规格: {meta.get('local_size_mb')}MB · {meta.get('width')}x{meta.get('height')} "
+                f"· {meta.get('fps')}fps · {meta.get('vcodec')}",
+                f"时长: {core.hms(float(meta.get('duration') or 0))}",
+                f"音轨: {('有（' + str(meta.get('acodec')) + '）') if meta.get('acodec') else '无'}",
+                "平台字幕: 无（本地文件没有平台字幕 —— 台词走 ASR，画面字走 video_ocr）",
+            ]
+        else:
+            lines = [
+                f"id: {meta.get('id')}", f"站点: {meta.get('extractor')}",
+                f"标题: {meta.get('title')}", f"UP主: {meta.get('uploader')}",
+                f"发布: {meta.get('upload_date')}", f"时长: {core.hms(float(meta.get('duration') or 0))}",
+                f"播放/点赞: {meta.get('view_count')} / {meta.get('like_count')}",
+                f"平台字幕: {len(meta.get('has_subs') or [])} 种，自动字幕: {len(meta.get('has_auto_subs') or [])} 种",
+            ]
         bgm = meta.get("bgm") or {}
         if bgm:
             lines.append(f"平台音乐: {bgm.get('music_title') or '未知'}")
@@ -447,6 +475,10 @@ def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
             with _MEDIA_LOCK:
                 rows, name = web.download_subs(url, d, web.sub_langs_for(lang))
             if not rows:
+                if web.local_path(url):
+                    return ("这是本地文件，没有平台字幕（那种字幕只存在于网站上）。\n"
+                            "- 台词：`video_brief`（本地 ASR）\n"
+                            "- 画面硬字幕：`video_ocr`（本地 OCR，离线）")
                 return ("没有可用的平台字幕（人工/自动都没有）。\n"
                         "- 可用 `video_brief` 走本地 ASR；方言/口音重时结果可能不准。\n"
                         "- 也可用 `video_sheet` 看画面里的硬字幕。")
@@ -504,7 +536,7 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
                     with _MEDIA_LOCK:
                         vid = web.download_video_lowest(url, d, SCAN_HEIGHT)
                         cuts = web.shot_cuts(vid, CUT_THRESHOLD)
-                        vid.unlink(missing_ok=True)
+                        _drop_temp(vid, url)
                 except (SystemExit, Exception) as e:  # noqa: B014 - one outcome for both
                     scan_error = str(e)
             threats = []
@@ -1059,6 +1091,8 @@ def video_frames(url: str, at: list[float], width: int = 960) -> list:
 def video_full(url: str, confirm: bool = False, max_mb: float = MAX_FULL_MB) -> str:
     """下载整片（仅在你明确要看全片时使用）。必须 confirm=True 才会执行。
     普通分析不需要它——先试 video_brief。"""
+    if web.local_path(url):
+        return "这已经是本地文件，不需要下载。要全文用 `video_brief(level=\"full\")`。"
     if not confirm:
         return ("拒绝：这会下载整片。若确实需要，再调用一次并传 confirm=true。"
                 "通常 video_brief + video_sheet 就够了。")
@@ -1106,7 +1140,7 @@ def _do_brief_locked(progress, url, lang, model, scan_cuts, comments, full, prom
         with _MEDIA_LOCK:
             vid = web.download_video_lowest(url, d, SCAN_HEIGHT)
             cuts = web.shot_cuts(vid, CUT_THRESHOLD)
-            vid.unlink(missing_ok=True)
+            _drop_temp(vid, url)
     threats = []
     for k in ('title', 'description'):
         threats += S.scan(meta.get(k) or '', where=k)
@@ -1281,6 +1315,9 @@ def video_comments(url: str, limit: int = 40, with_images: bool = False) -> list
     争议度启发式估计、高赞评论。默认**不**返回评论配图：一张截图走 MCP 是 base64
     全量进上下文，很容易把窗口顶爆。确实要看图再传 with_images=true（最多 4 张）。
     评论是最敌对的文本来源，全部经过清洗与注入扫描后才展示。"""
+    if web.local_path(url):
+        return ["这是本地文件，没有评论区（评论只存在于发布平台上）。"
+                "要判断观众反应，只能用 video_meta / video_brief 给出的事实，不要编造评论。"]
     try:
         with _LOCK, _MEDIA_LOCK:      # comments download pictures into out/<id>/
             info = extra.bili_comments(url, limit=limit)

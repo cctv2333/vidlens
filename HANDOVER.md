@@ -1,11 +1,11 @@
 # 工程交接入口
 
-## 当前状态（2026-10-26，V-014）
+## 当前状态（2026-10-26，V-016）
 
 新接手先看这六件事：
 
-1. **两个仓库**：`cctv2333/vidlens`（Python + MCP，PyPI `vidlens-mcp` **1.5.3**）、
-   `cctv2333/dsh-vidlens`（DSH 插件，npm `dsh-vidlens` **1.3.3**）。插件通过常驻桥
+1. **两个仓库**：`cctv2333/vidlens`（Python + MCP，PyPI `vidlens-mcp` **1.6.0**）、
+   `cctv2333/dsh-vidlens`（DSH 插件，npm `dsh-vidlens` **1.4.0**）。插件通过常驻桥
    `bridge/vidlens_bridge.py` 复用 `vl_mcp` 的函数，不存在第二份实现。
    **插件不含 Python 核心**：它 `import vidlens`，拿不到就回一句 pip 命令
    （`_import_error_text`），所以插件用户装核心走 PyPI，不走 GitHub。
@@ -18,13 +18,18 @@
    - `vidlens_models(action="download", name=..., confirm=true)` —— 音频侧同一条规则：
      先报大小与落点、确认才下；whisper 不再静默拉 484MB（B-066）。实测 ced-mini
      10.0MB / 52.3s，下完 `available()` 立刻认出来。见 V-014。
-4. **路径规则统一，发布物里没有开发机路径**：`vidlens.models_root()` =
+4. **本地文件是一等输入（1.6.0 / B-068）**：`url` 参数同时接受 `D:\a.mp4`、`file:///D:/a.mp4`、`~/a.mov`。
+   判定只在 `vidlens_web.local_path()` 一处，五处短路（meta 用 ffmpeg banner、subs 返空落回 ASR、
+   audio 抽 16k 单声道、video_lowest 直接回源文件、section 重编码切片）。
+   **本地模式下 `download_video_lowest` 返回的是用户自己的文件**，所以凡是删临时文件的地方都走
+   `_drop_temp(p, url)`——不要直接 `unlink`。
+5. **路径规则统一，发布物里没有开发机路径**：`vidlens.models_root()` =
    env → legacy 目录（**仅当存在**）→ 用户数据目录。whisper / audio-tagging / SenseVoice
    三处共用；`NoPersonalPathsTests` 与插件自检各有一条护栏。见 B-065、V-013。
-5. **验证入口**：`python -m unittest discover -s tests`（**192 项**）、插件
-   `node tools/selftest.mjs`（**128 项**）、CI（ubuntu/windows × py3.10/3.12）、
+6. **验证入口**：`python -m unittest discover -s tests`（**205 项**）、插件
+   `node tools/selftest.mjs`（**130 项**）、CI（ubuntu/windows × py3.10/3.12）、
    发布走 `v* tag + OIDC`（PyPI / npm 都不需要 token；注意 **pyproject 不能有 BOM**，B-064）。
-6. **最该继续做的**（按收益）：
+7. **最该继续做的**（按收益）：
 
    | # | 事项 | 为什么 | 起手点 |
    |---|---|---|---|

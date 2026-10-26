@@ -441,7 +441,8 @@ def visual_scan(url: str, n: int = 24, cols: int = 6, rows: int = 4,
         got = tile(frames[k:k + per_sheet], dst, cols, rows)
         if got:
             sheets.append(str(got))
-    vid.unlink(missing_ok=True)
+    if not web.local_path(url):
+        vid.unlink(missing_ok=True)      # local input: `vid` IS the user's file
     # keep only the contact sheets; individual frames are already tiled into them
     for old in list(work.glob("f_*.jpg")) + list(work.glob("lbl_*.jpg")):
         old.unlink(missing_ok=True)

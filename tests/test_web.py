@@ -182,5 +182,77 @@ class BriefTests(unittest.TestCase):
         self.assertIn("建议下一步看哪里", brief)
 
 
+DEMO = ROOT / "demo" / "meeting.mp4"
+
+
+@unittest.skipUnless(DEMO.is_file(), "demo/meeting.mp4 不在（仓库自带样例）")
+class LocalSourceTests(unittest.TestCase):
+    """本地文件是一等输入：不碰 yt-dlp，也绝不删用户自己的文件。"""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vl-local-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_accepts_plain_quoted_slash_and_file_url(self):
+        for s in (str(DEMO), f'"{DEMO}"', DEMO.as_uri(), str(DEMO).replace("\\", "/")):
+            self.assertEqual(W.local_path(s), DEMO.resolve(), s)
+
+    def test_urls_stay_urls(self):
+        for s in ("https://example.com/a.mp4", "bilibili://video/BV1xx",
+                  "BV1xx411c7mD", "mailto:a@b.c", ""):
+            self.assertIsNone(W.local_path(s), s)
+
+    def test_missing_file_is_not_local(self):
+        self.assertIsNone(W.local_path(str(self.tmp / "nope.mp4")))
+
+    def test_directory_says_so(self):
+        with self.assertRaises(SystemExit):
+            W.local_path(str(self.tmp))
+
+    def test_meta_comes_from_the_file(self):
+        meta, threats = W.fetch_meta(str(DEMO))
+        self.assertTrue(meta["id"].startswith("local-"))
+        self.assertEqual(meta["extractor"], "local")
+        self.assertAlmostEqual(meta["duration"], 30.0, delta=0.5)
+        self.assertEqual((meta["width"], meta["height"]), (1280, 720))
+        self.assertTrue(meta["acodec"])
+        self.assertEqual(meta["local_path"], str(DEMO.resolve()))
+        self.assertIsInstance(threats, list)
+
+    def test_no_yt_dlp_call_for_local(self):
+        def boom(*a, **k):
+            raise AssertionError("本地输入不该走 yt-dlp")
+        orig, W.run_yt = W.run_yt, boom
+        try:
+            W.fetch_meta(str(DEMO))
+            self.assertEqual(W.download_subs(str(DEMO), self.tmp, "zh"), ([], ""))
+        finally:
+            W.run_yt = orig
+
+    def test_section_cut_is_frame_accurate(self):
+        sec = W.download_section(str(DEMO), self.tmp, 5.0, 8.0, 360, False)
+        self.assertTrue(sec.is_file())
+        self.assertAlmostEqual(W.media_duration(sec), 3.0, delta=0.25)
+
+    def test_audio_extract_never_returns_source(self):
+        a = W.download_audio(str(DEMO), self.tmp, 200, False)
+        self.assertNotEqual(a.resolve(), DEMO.resolve())
+        self.assertGreater(a.stat().st_size, W.MIN_AUDIO_BYTES)
+        self.assertAlmostEqual(W.media_duration(a), 30.0, delta=0.5)
+
+    def test_video_lowest_returns_source_untouched(self):
+        v = W.download_video_lowest(str(DEMO), self.tmp, 360)
+        self.assertEqual(v, DEMO.resolve())
+        self.assertTrue(DEMO.is_file())
+
+    def test_brief_does_not_claim_a_view_count(self):
+        meta, _ = W.fetch_meta(str(DEMO))
+        brief = W.build_brief(meta, [], [], [], 30.0, [], "", "small")
+        self.assertIn("本地文件", brief)
+        self.assertNotIn("None / None", brief)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

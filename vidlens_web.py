@@ -12,10 +12,15 @@ Rules baked in (do not remove):
      We are not a crawler. We look like a person who waits.
   4. HOSTILE TEXT. Titles/descriptions/subtitles go through vidlens_sanitize before
      they touch a file or a summary.
+  5. LOCAL FILES ARE FIRST CLASS. A path you already have (or a file:// URL) never
+     touches yt-dlp: no download, no cookie, no "unsupported url scheme". The CLI
+     always worked this way (`vl probe movie.mp4`); the web layer used to reject it,
+     which is why every MCP tool said `Unsupported url scheme: "d"` for `D:\\a.mp4`.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -26,9 +31,13 @@ import time
 import types
 from collections import Counter
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import vidlens_ads as ads_mod
 import vidlens_sanitize as S
+
+VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv",
+             ".ts", ".wmv", ".mpg", ".mpeg", ".ogv", ".3gp"}
 
 POLITE = [
     "--no-warnings", "--no-color", "--no-playlist", "--no-progress",
@@ -255,7 +264,105 @@ def music_hints(meta: dict) -> list[str]:
     return uniq[:8]
 
 
+# ------------------------------------------------------------------ local files
+#
+# A path the user already has is not a URL. Deciding that in ONE place is what
+# makes the fix cover the CLI, the MCP tools and the plugin bridge at once. The
+# old behaviour -- handing `D:\a.mp4` to yt-dlp -- failed with
+# `Unsupported url scheme: "d"`, i.e. the drive letter was read as a scheme.
+
+
+def local_path(src: str) -> Path | None:
+    """The existing file `src` points at, or None when it is not a local file.
+
+    Accepts a plain path (`D:\\a.mp4`, `demo\\a.mp4`), a quoted path, `file:///D:/a.mp4`
+    and `~/a.mp4`. Anything with a real scheme (`http:`, `bilibili://`, `mailto:`)
+    returns None and keeps the URL behaviour it always had.
+    """
+    if not isinstance(src, str):
+        return None
+    s = src.strip().strip('"').strip("'")
+    if not s:
+        return None
+    low = s.lower()
+    if low.startswith("file:"):
+        u = urlparse(s)
+        if u.netloc and u.netloc.lower() not in ("", "localhost"):
+            return None                      # \\server\share: not ours to guess
+        s = unquote(u.path)
+        if os.name == "nt" and re.match(r"^/[A-Za-z]:", s):
+            s = s[1:]
+    elif re.match(r"^[a-z][a-z0-9+.-]*://", low):
+        return None                          # http(s), ftp, rtmp: the network path
+    elif re.match(r"^[a-z][a-z0-9+.-]*:", low) and not re.match(r"^[a-z]:[\\/]", low):
+        return None                          # a bare drive letter is not a scheme
+    try:
+        p = Path(os.path.expanduser(s))
+        if p.is_dir():
+            raise SystemExit(f"这是目录不是视频文件：{p}（请给具体文件）")
+        return p.resolve() if p.is_file() else None
+    except OSError:
+        return None
+
+
+def _slug(text: str, limit: int = 40) -> str:
+    s = re.sub(r"[^\w.-]+", "-", (text or "").strip()).strip("-._")
+    return (s or "video")[:limit]
+
+
+def _local_meta(p: Path) -> tuple[dict, list[dict]]:
+    """Metadata for a file on disk, in the same shape ``fetch_meta`` returns.
+
+    Parsed from ffmpeg's banner on purpose: that is the same probe ``vl probe``
+    prints, so the CLI and the tools can never disagree about a file's duration.
+    """
+    _rc, _so, se = core().run(["-i", str(p)])
+    text = se or ""
+    dur = 0.0
+    m = re.search(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)", text)
+    if m:
+        dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    if dur <= 0:
+        raise SystemExit(f"读不出时长：{p.name}（不是视频文件，或文件已损坏）")
+    vcodec = re.search(r"Stream #\d+:\d+.*?: Video: ([^,\s]+)", text)
+    size = re.search(r"Video:.*?, (\d{2,5})x(\d{2,5})", text)
+    fps = re.search(r"(\d+(?:\.\d+)?) fps", text)
+    acodec = re.search(r"Stream #\d+:\d+.*?: Audio: ([^,\s]+)", text)
+    meta = {
+        "id": f"local-{_slug(p.stem)}-{hashlib.sha1(str(p).encode('utf-8')).hexdigest()[:8]}",
+        "title": p.stem,
+        "uploader": "本地文件",
+        "uploader_id": None,
+        "upload_date": time.strftime("%Y%m%d", time.localtime(p.stat().st_mtime)),
+        "duration": round(dur, 3),
+        "view_count": None,
+        "like_count": None,
+        "extractor": "local",
+        "webpage_url": p.as_uri(),
+        "thumbnail": None,
+        "description": None,
+        "has_subs": [],
+        "has_auto_subs": [],
+        "bgm": None,
+        "need_login_subtitle": None,
+        "music_hints": [],
+        "live_status": "not_live",
+        "age_limit": 0,
+        "local_path": str(p),
+        "local_size_mb": round(p.stat().st_size / 1048576, 1),
+        "vcodec": vcodec.group(1) if vcodec else None,
+        "width": int(size.group(1)) if size else None,
+        "height": int(size.group(2)) if size else None,
+        "fps": float(fps.group(1)) if fps else None,
+        "acodec": acodec.group(1) if acodec else None,
+    }
+    return meta, S.scan(p.name, where="文件名")
+
+
 def fetch_meta(url: str) -> tuple[dict, list[dict]]:
+    local = local_path(url)
+    if local:
+        return _local_meta(local)
     rc, out, err = run_yt(["-J", "--skip-download", url])
     if rc != 0 or not out.strip():
         if is_login_wall(err):
@@ -373,6 +480,10 @@ def parse_vtt(text: str) -> list[dict]:
 
 def download_subs(url: str, d: Path, langs: str) -> tuple[list[dict], str]:
     """Download platform subtitles only (0 bytes of media). Human subs win over auto."""
+    if local_path(url):
+        # A file on disk has no platform captions. Returning empty (not an error) is
+        # what makes the caller fall through to ASR, exactly like a video without subs.
+        return [], ""
     subdir = d / "subs"
     subdir.mkdir(parents=True, exist_ok=True)
     for old in list(subdir.glob("sub*.vtt")) + list(subdir.glob("sub*.srt")):
@@ -425,9 +536,61 @@ def _has_video_stream(path: Path) -> bool:
     return bool(re.search(r"Stream #\d+:\d+.*?: Video:", se or ""))
 
 
+def _local_audio(src: Path, d: Path, force: bool = False) -> Path:
+    """A small mono 16 kHz track from a local file -- what ASR actually wants.
+
+    Never returns ``src`` itself: callers delete the file they were handed once the
+    transcript is cached (vl_mcp._rows_with_media), and deleting the user's own
+    movie would be an unrecoverable kind of rude.
+    """
+    out = d / "audio.m4a"
+    if out.exists() and not force and out.stat().st_size > MIN_AUDIO_BYTES:
+        return out
+    rc, _so, se = core().run(["-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
+                             "-c:a", "aac", "-b:a", "64k", str(out)])
+    if rc != 0 or not out.exists() or out.stat().st_size <= MIN_AUDIO_BYTES:
+        raise SystemExit(f"这个文件里没有可用的音轨（{src.name}）"
+                         f"{(se or '')[-120:]}；画面内容请用 video_ocr / video_visual_scan")
+    return out
+
+
+def _local_cut(src: Path, d: Path, t0: float, t1: float, height: int,
+               with_audio: bool) -> Path:
+    """Cut one section out of a local file by re-encoding (frame-accurate).
+
+    `-c copy` would be faster but snaps to keyframes, so a "20.0-40.0s" section
+    could start at 17.2s and every timestamp in the sheet would be off.
+    """
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / "sec.mp4"
+    args = ["-y", "-ss", f"{max(0.0, t0):.3f}", "-i", str(src),
+            "-t", f"{max(0.1, t1 - t0):.3f}",
+            "-vf", f"scale=-2:{max(2, int(height))}", "-c:v", "libx264",
+            "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]
+    args += ["-c:a", "aac", "-b:a", "96k"] if with_audio else ["-an"]
+    rc, _so, se = core().run(args + [str(out)])
+    if rc != 0 or not out.exists():
+        raise SystemExit(f"截取 {t0:.1f}-{t1:.1f}s 失败：{(se or '')[-160:]}")
+    return out
+
+
+def _local_audio_section(src: Path, d: Path, t0: float, t1: float) -> Path:
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / "sec.m4a"
+    rc, _so, se = core().run(["-y", "-ss", f"{max(0.0, t0):.3f}", "-i", str(src),
+                             "-t", f"{max(0.1, t1 - t0):.3f}", "-vn", "-ac", "1",
+                             "-ar", "16000", "-c:a", "aac", "-b:a", "64k", str(out)])
+    if rc != 0 or not out.exists():
+        raise SystemExit(f"截取 {t0:.1f}-{t1:.1f}s 音轨失败：{(se or '')[-160:]}")
+    return out
+
+
 def download_audio(url: str, d: Path, max_mb: float, force: bool,
                    expected_dur: float = 0.0, notes: list | None = None) -> Path:
     d.mkdir(parents=True, exist_ok=True)
+    local = local_path(url)
+    if local:
+        return _local_audio(local, d, force)
     # reuse what we already have: re-downloading 26MB for nothing is rude to the site
     existing = [p for p in d.glob("audio.*") if p.suffix.lower() in AUDIO_EXT
                 and p.stat().st_size > MIN_AUDIO_BYTES]
@@ -486,6 +649,12 @@ def section_args(t0: float, t1: float, height: int, with_audio: bool) -> list[st
 def download_video_lowest(url: str, d: Path, height: int = 360) -> Path:
     """Video-only, lowest usable resolution. Only for shot-cut scanning."""
     d.mkdir(parents=True, exist_ok=True)
+    local = local_path(url)
+    if local:
+        # The file is already here: no transcode, no copy. Callers must treat the
+        # returned path as read-only (vidlens_extra / vl_mcp only delete files that
+        # live inside the work dir).
+        return local
     ffdir = core().ffmpeg_dir()
     rc, out, err = run_yt(["-f", video_selector(height),
                            "--ffmpeg-location", ffdir,
@@ -500,6 +669,9 @@ def download_video_lowest(url: str, d: Path, height: int = 360) -> Path:
 def download_section(url: str, d: Path, t0: float, t1: float,
                      height: int, with_audio: bool) -> Path:
     d.mkdir(parents=True, exist_ok=True)
+    local = local_path(url)
+    if local:
+        return _local_cut(local, d, t0, t1, height, with_audio)
     ffdir = core().ffmpeg_dir()
     args = section_args(t0, t1, height, with_audio) + [
         "--ffmpeg-location", ffdir, "-o", str(d / "sec.%(ext)s"), url]
@@ -515,6 +687,9 @@ def download_audio_section(url: str, d: Path, t0: float, t1: float,
                            max_mb: float = MAX_AUDIO_MB) -> Path:
     """Audio only for one window. Used when no transcript/subs are cached yet."""
     d.mkdir(parents=True, exist_ok=True)
+    local = local_path(url)
+    if local:
+        return _local_audio_section(local, d, t0, t1)
     ffdir = core().ffmpeg_dir()
     args = ["-f", "ba/b", "--download-sections", f"*{fmt_t(t0)}-{fmt_t(t1)}",
             "--ffmpeg-location", ffdir, "-o", str(d / "sec.%(ext)s"), url]
@@ -697,6 +872,12 @@ def build_brief(meta: dict, rows: list[dict], gaps: list[dict], cuts: list[float
         f"时长: {c.hms(dur)}",
         f"播放/点赞: {meta.get('view_count')} / {meta.get('like_count')}",
     ]
+    if meta.get("local_path"):
+        # A file on disk has no play count. Printing "None / None" invites the model
+        # to read it as "0 views", so say what it actually is.
+        src_lines[-1] = (f"文件: {meta['local_path']}（{meta.get('local_size_mb')}MB，"
+                         f"{meta.get('width')}x{meta.get('height')}）"
+                         " —— 本地文件，没有播放/点赞/平台字幕")
     if meta.get("_fetched_at"):
         src_lines.append(f"抓取于: {meta['_fetched_at']}（播放/点赞是那一刻的快照）")
     src_lines.append(f"转写来源: {sub_source or 'n/a'}")

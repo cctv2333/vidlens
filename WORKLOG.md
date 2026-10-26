@@ -6,6 +6,7 @@
 
 | # | 日期 | 标题 | 状态 | 归档 |
 |---|---|---|---|---|
+| V-016 | 2026-10-26 | 本地视频接进工具层（B-068）：local_path() 一处判定 + 五处短路 + 禁止删源文件 + 13 条回归 | 已完成 | — |
 | V-015 | 2026-10-26 | 交接文档更新到 V-014 + 用量口径（clone ≠ 安装）+ 插件 README 去掉本机路径 | 已完成 | — |
 | V-014 | 2026-10-26 | 音频模型也接下载链路：`vidlens_models(action="download")` + whisper 不再静默下载 + 乱码提示修复 | 已完成 | — |
 | V-013 | 2026-10-26 | 去掉发布物里的本机路径（B-065）+ 清 4 处死代码 + 两条"无个人路径"护栏 | 已完成 | — |
@@ -24,6 +25,28 @@
 
 ---
 
+## 2026-10-26 本地视频接进工具层（V-016 / B-068）
+
+- **触发**：用户说「不能看本地视频？明明可以看——这就是硬编码的问题」。上一轮我说成"vidlens 不能看本地视频"，
+  把工具层的限制说成了工具的能力，错得比较外行：CLI 的 8 个原语（probe/shots/frames/sheet/speech/pauses/env/report）
+  **一直是吃本地文件的**，`install.cmd` 里的自检就是 `vl.cmd probe demo\meeting.mp4`。
+- **断点**：`vidlens_web` 只认 URL（"fetch the minimum bytes needed to understand a public video"），
+  `vl_mcp` 的每个工具入口都先过 `web.fetch_meta` → yt-dlp，于是 `D:\a.mp4` 被解析成 scheme `d`：
+  `Unsupported url scheme: "d"`。`file://` 则被 yt-dlp 以"安全原因默认关闭"挡掉。
+- **修法（一处判定、五处短路）**：`vidlens_web.local_path()`
+  - 认：纯路径、带引号、`file:///D:/…`、`~/x.mov`、正斜杠、相对路径；目录给明确报错；
+  - 不认：`http(s)://`、`bilibili://`、`mailto:`、`BV…`（真 scheme 一律走网络老路）。
+  然后 `fetch_meta` 用 ffmpeg banner（和 `vl probe` 同一份正则行为）、`download_subs` 返回空让调用方落回 ASR、
+  `download_audio` 抽 16kHz 单声道 m4a、`download_video_lowest` 直接返回源文件、
+  `download_section`／`download_audio_section` 用 ffmpeg 重编码切片（**不用 `-c copy`**：那会漂到关键帧，时间码全偏）。
+- **顺手堵的洞（比修 bug 更要紧）**：`download_video_lowest` 在本地模式下返回**用户自己的文件**，
+  而 `_rows_with_media`、`visual_scan`、`shot_cuts` 之后都有 `unlink`——那等于把用户的电影删了。
+  新增 `vl_mcp._drop_temp(p, url)`：目的路径 == 源路径时**不删**；`vidlens_extra.visual_scan` 同样加守卫。
+- **文案**：本地输入不再打印 `播放/点赞: None / None`（会被读成 0 播放），改为文件路径+规格+音轨；
+  `brief` 的"来源"块同理。`video_subs` / `video_comments` / `video_full` 对本地输入直接说明"没有这个东西"，不编造。
+- **验收**：`demo\meeting.mp4` 上跑通 probe / brief（ASR 覆盖 100%、77 字）/ sheet（4×3 带时间码）/ OCR（3 帧，无字=0 段）；
+  测试 192 → **205**（+10 LocalSourceTests、+3 MCP `_drop_temp`/本地 meta/subs）；插件 selftest 128 → **130**。
+- **版本**：PyPI 1.5.3 → **1.6.0**（功能新增）；插件 1.3.3 → **1.4.0**；`vl_mcp` server version 1.4.0 → 1.6.0（一直是陈的）。
 ## 2026-10-26 音频模型也接上下载链路（V-014）
 
 - **触发**：用户问「OCR 建立了下载链路。那音频模型呢？也是这样做的吗？我们只能在我们的环境上实现，
