@@ -4,20 +4,25 @@
 
 Why this file exists
 --------------------
-The user already has a SenseVoice ONNX model (937 MB, from FlashVoice). It is
-the official sherpa-onnx float32 SenseVoiceSmall export: metadata says
-`sense_voice_ctc`, vocab 25055, `iic/SenseVoiceSmall`. sherpa-onnx gives us
-feature extraction + CTC decoding for free, and one pass returns:
+A SenseVoice ONNX model may already be on the machine (the FlashVoice desktop app
+ships one; sherpa-onnx models work too). It is the official sherpa-onnx float32
+SenseVoiceSmall export: metadata says `sense_voice_ctc`, vocab 25055,
+`iic/SenseVoiceSmall`. sherpa-onnx gives us feature extraction + CTC decoding for
+free, and one pass returns:
 
     text, lang, emotion, event, timestamps, tokens
 
-No cloud, no API key, no second model download. The only extra file is
-tokens.txt (308 KB), stored under D:\\dev\\models\\sensevoice.
+No cloud, no API key, no second model download.
 
 Environment:
-    VIDLENS_SENSEVOICE_MODEL   default: FlashVoice model path
-    VIDLENS_SENSEVOICE_TOKENS  default: D:\\dev\\models\\sensevoice\\tokens.txt
+    VIDLENS_SENSEVOICE_MODEL   explicit .onnx path (wins)
+    VIDLENS_SENSEVOICE_TOKENS  explicit tokens.txt path (wins)
+    VIDLENS_MODEL_ROOT         where weights live (see vidlens.models_root)
     VIDLENS_ASR=whisper        force the old faster-whisper backend
+
+No personal path is compiled in. Earlier versions pointed at one developer's
+`C:\\Users\\<name>\\AppData\\...`; on any other machine that is just a missing
+file, so candidates are probed in order and the first one that exists is used.
 """
 
 from __future__ import annotations
@@ -26,10 +31,45 @@ import os
 from collections import Counter
 from pathlib import Path
 
-DEFAULT_MODEL = (os.environ.get("VIDLENS_SENSEVOICE_MODEL")
-                 or r"C:\Users\yu\AppData\Roaming\com.flashvoices\models\sense-voice-large.onnx")
-DEFAULT_TOKENS = (os.environ.get("VIDLENS_SENSEVOICE_TOKENS")
-                  or r"D:\dev\models\sensevoice\tokens.txt")
+
+def candidate_models() -> list:
+    """Model paths to probe, best first. Only existing files are ever returned."""
+    out: list = []
+    env = os.environ.get("VIDLENS_SENSEVOICE_MODEL")
+    if env:
+        out.append(Path(env).expanduser())
+    try:
+        import vidlens as core
+        root = core.models_root()
+    except Exception:
+        root = Path(os.environ.get("VIDLENS_MODEL_ROOT") or
+                    (Path.home() / ".cache" / "vidlens-models"))
+    out += [root / "sensevoice" / "sense-voice-large.onnx",
+            root / "sensevoice" / "model.onnx"]
+    # The FlashVoice app keeps its copy here on Windows; use it if it is there.
+    if os.name == "nt" and os.environ.get("APPDATA"):
+        out.append(Path(os.environ["APPDATA"]) / "com.flashvoices" / "models"
+                   / "sense-voice-large.onnx")
+    return out
+
+
+def candidate_tokens() -> list:
+    out: list = []
+    env = os.environ.get("VIDLENS_SENSEVOICE_TOKENS")
+    if env:
+        out.append(Path(env).expanduser())
+    for m in candidate_models():
+        out.append(m.parent / "tokens.txt")
+    return out
+
+
+def _first_existing(cands: list, fallback: Path) -> Path:
+    for c in cands:
+        if c.is_file():
+            return c
+    return fallback
+
+
 CHUNK_SECONDS = 20.0
 LANGS = ("auto", "zh", "en", "ja", "ko", "yue")
 
@@ -37,11 +77,11 @@ _RECS: dict[str, object] = {}
 
 
 def _model_path() -> Path:
-    return Path(os.environ.get("VIDLENS_SENSEVOICE_MODEL") or DEFAULT_MODEL)
+    return _first_existing(candidate_models(), candidate_models()[0])
 
 
 def _tokens_path() -> Path:
-    return Path(os.environ.get("VIDLENS_SENSEVOICE_TOKENS") or DEFAULT_TOKENS)
+    return _first_existing(candidate_tokens(), candidate_tokens()[0])
 
 
 def available() -> bool:

@@ -13,8 +13,25 @@ import os
 import shutil
 from pathlib import Path
 
-MODEL_ROOT = Path(os.environ.get("VIDLENS_MODEL_ROOT") or (
-    r"D:\dev\models" if Path("D:/").exists() else str(Path.home() / ".cache" / "vidlens-models")))
+def default_model_root() -> Path:
+    """env -> legacy checkout dir *if it exists* -> per-user data dir.
+
+    The legacy path used to be chosen whenever a D: drive existed, which is true
+    on a great many machines that have nothing to do with this project. Resolving
+    it here, and only when the directory is really there, keeps this checkout's
+    weights findable without handing strangers a path they never created.
+    """
+    env = os.environ.get("VIDLENS_MODEL_ROOT")
+    if env:
+        return Path(env).expanduser()
+    try:
+        import vidlens as core          # local import: keeps the import order free
+        return core.models_root()
+    except Exception:
+        return Path.home() / ".cache" / "vidlens-models"
+
+
+MODEL_ROOT = default_model_root()
 WHISPER_ROOT = Path(os.environ.get("VIDLENS_MODEL_DIR") or (MODEL_ROOT / "whisper"))
 
 

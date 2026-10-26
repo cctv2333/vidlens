@@ -6,6 +6,7 @@
 
 | # | 日期 | 标题 | 状态 | 归档 |
 |---|---|---|---|---|
+| V-013 | 2026-10-26 | 去掉发布物里的本机路径（B-065）+ 清 4 处死代码 + 两条"无个人路径"护栏 | 已完成 | — |
 | V-012 | 2026-10-26 | 内置本地 OCR（RapidOCR）：`video_ocr` + 水印/图表帧判定 + 许可证登记 | 已完成 | — |
 | V-011 | 2026-10-26 | 外部 AI 实测反馈修复：无人声误判 / 摘要取样偏差 / 大图 base64 / 成本自述 / 口径时间戳 | 已完成 | — |
 | V-010 | 2026-10-26 | awesome-dsh-plugin 收录 PR #9422 转绿（age 门槛 / 手动触发路径 / README 自动生成） | 已完成 | — |
@@ -18,6 +19,42 @@
 | V-003 | 2026-10-25 | 硬编码/魔法数字审计与字幕/抽样能力验收 | 已完成 | — |
 | V-002 | 2026-10-25 | 审计 P1/P2 修复：字幕优先、cookie、锁、注入扫描、缓存与边界 | 已完成 | — |
 | V-001 | 2026-10-25 | plan() / pauses.json 双形态崩溃修复 | 已完成 | — |
+
+---
+
+## 2026-10-26 去掉发布物里的本机路径（V-013）
+
+- **触发**：用户看完 OCR 安装提示后问「人家怎么能跟我的环境一样呢？我怕你都有死代码」。
+  这个质疑成立——提示里是运行时算出来的路径，但**代码里确实有本机路径**。
+- **事实（逐条 grep + pyflakes）**：
+  - `vidlens_models`：`r"D:\dev\models" if Path("D:/").exists()` —— 判据是"有没有 D 盘"，
+    于是任何有 D 盘的机器都会被导向这个目录（不是我的机器，是不认识的人）。
+  - `vidlens_sensevoice`：`C:\Users\<本人>\AppData\Roaming\com.flashvoices\...` 写死在源码里。
+  - `index.js`：回退列表里带 `D:\vidlens\vidlens`。
+  - 死代码：`vidlens.py` 里赋值未用的 `n` 与 `import array`；`vidlens_web.py` 里未用的
+    `contextlib`、`shutil`；`vidlens_extra.py` 一处无占位符的 f-string；
+    `vidlens_ocr.install(auto=...)` 的 `auto` 参数从头到尾没用，`video_ocr` 里还有一句
+    死赋值 `ok = True`。
+- **改动**：
+  - 新增 `vidlens.models_root()`：`VIDLENS_MODEL_ROOT` → **legacy 目录仅当它真的存在** →
+    按用户数据目录（Windows `%LOCALAPPDATA%\vidlens\models`，POSIX XDG）。whisper /
+    audio-tagging / SenseVoice 三处统一走它；SenseVoice 改成候选列表探测（不再带用户名，
+    FlashVoice 那份从 `%APPDATA%` 现算）。
+  - `_model_dirs()` 只在 `plat == "nt"` 且 legacy 存在时才把 D 盘当候选；被问"POSIX 怎么算"
+    时返回 POSIX 的答案，而不是本进程解析出来的值。
+  - 插件回退删掉 `D:\vidlens\vidlens`（config → env → 同级仓库）。
+  - OCR 换目录示例按目标盘符现算：C 盘机器给 `C:\vidlens\ocr`，不再给 D:。
+  - 删除上述 4 处死代码 + `install()` 的无用参数 + 死赋值。
+- **验证**：
+  - `Ran 184 tests ... OK (skipped=1)`（新增 `NoPersonalPathsTests` 3 项；
+    `ModelDirTests` 从"Windows 必须优先 D 盘"改成"legacy 只在存在时才是候选"）。
+  - 现场演示：本机 `models_root -> D:\dev\models`（legacy 存在，行为不变）；把 legacy 换成
+    不存在的路径 + `LOCALAPPDATA=C:\Users\someone\AppData\Local` 后
+    `models_root -> C:\Users\someone\AppData\Local\vidlens\models`；设
+    `VIDLENS_OCR_TARGET=C:\vidlens\ocr` 后提示里的示例同步变成 C:。
+  - `pyflakes` 只剩 3 处 `# noqa: F401` 的可用性探测导入。
+  - 插件自检 **128/128**（新增 "no personal paths baked into the shipped code"）。
+- **状态**：已完成。
 
 ---
 

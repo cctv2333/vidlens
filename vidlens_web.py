@@ -16,11 +16,9 @@ Rules baked in (do not remove):
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading

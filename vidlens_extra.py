@@ -399,7 +399,7 @@ def tile(frames: list[Path], dst: Path, cols=6, rows=4) -> Path | None:
     if empty:
         blank = d / f"lbl_{len(seq):03d}.jpg"
         subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-                        "-i", f"color=c=black:s=480x270:d=1", "-frames:v", "1",
+                        "-i", "color=c=black:s=480x270:d=1", "-frames:v", "1",
                         "-y", str(blank)], check=False)
         for j in range(empty - 1):
             shutil.copy2(blank, d / f"lbl_{len(seq)+1+j:03d}.jpg")

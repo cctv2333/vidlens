@@ -55,23 +55,53 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 # ---------------------------------------------------------------- ffmpeg glue
 
-# Windows checkouts keep the weights on D:. On POSIX that literal path is not a
-# real location -- creating it would put a directory named `D:\dev\models\whisper`
-# in the CWD, after which it exists, wins over ~/.cache/whisper forever and the
-# real cache is invisible. So the Windows path is only offered on Windows.
-_WIN_MODEL_DIR = r"D:\dev\models\whisper"
+# Older checkouts of this project kept the weights on D:. That path belongs to
+# one machine, not to the project: on anybody else's box it is absent, and
+# `Path("D:/").exists()` is true for millions of people who never asked us to
+# write there. So the legacy path is a *candidate that must exist*, never an
+# assumption, and everything else resolves to a per-user data directory.
+_LEGACY_MODEL_DIR = Path(r"D:\dev\models")
+
+
+def data_home() -> Path:
+    """Per-user data dir: %LOCALAPPDATA%\\vidlens on Windows, XDG on POSIX."""
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return base / "vidlens"
+
+
+def models_root() -> Path:
+    """Where weights live: env -> legacy dir if it exists -> per-user data dir."""
+    env = os.environ.get("VIDLENS_MODEL_ROOT")
+    if env:
+        return Path(env).expanduser()
+    if _LEGACY_MODEL_DIR.is_dir():
+        return _LEGACY_MODEL_DIR
+    return data_home() / "models"
 
 
 def _model_dirs(platform: str | None = None) -> list:
-    """Candidate model dirs, in priority order.
+    """Candidate whisper dirs, in priority order.
 
     ``platform`` defaults to ``os.name``; it exists as a parameter so the POSIX
     rule below can be tested from Windows (where it cannot be reproduced).
     """
     plat = os.name if platform is None else platform
+    if plat == os.name:
+        primary = str(models_root() / "whisper")
+    else:
+        # Asked about a platform this process is not running on: answer what that
+        # platform would use, not what this one resolved to.
+        primary = str((data_home() if plat == "nt" else Path.home() / ".local" / "share"
+                       / "vidlens") / "models" / "whisper")
+    legacy = str(_LEGACY_MODEL_DIR / "whisper")
     return [
         os.environ.get("VIDLENS_MODEL_DIR"),
-        _WIN_MODEL_DIR if plat == "nt" else None,
+        primary,
+        legacy if (plat == "nt" and _LEGACY_MODEL_DIR.is_dir()
+                   and legacy != primary) else None,
         str(Path.home() / ".cache" / "whisper"),
     ]
 
@@ -323,7 +353,6 @@ def cmd_frames(a):
     else:
         start, end = clamp_range(parse_t(a.start), parse_t(a.end))
         dur = end - start
-        n = max(1, int(round(dur * a.fps)) + 1)
         tmp = Path(tempfile.mkdtemp())
         rc, so, se = run(["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", a.video,
                           "-vf", f"fps={a.fps},scale={a.width}:-2",
@@ -517,7 +546,6 @@ def cmd_env(a):
     wav_of(a.video, wav, sr=8000)
     a16, sr = read_wav(wav)
     win = int(sr * a.win)
-    import array
     levels = []
     for i in range(0, len(a16), win):
         chunk = a16[i:i + win]

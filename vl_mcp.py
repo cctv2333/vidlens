@@ -1180,11 +1180,10 @@ def video_ocr(url: str, start: str | float = "0", end: str | float = "",
             preamble = (f"OCR 引擎没装，开始下载 {ocr.OCR_PACKAGE}：约 "
                         f"{ocr.OCR_DOWNLOAD_MB}MB，装到 {where}"
                         f"（占盘约 {ocr.OCR_DISK_MB}MB）\n")
-            done, report = ocr.install(auto=(mode == "auto"))
+            done, report = ocr.install()
             preamble += f"[{'已就绪' if done else '失败'}] {report}\n\n"
             if not done:
                 return preamble + ocr.notice()
-            ok = True
         else:
             return "ERROR: " + ocr.notice() + f"\n（当前导入失败: {why[:120]}）"
     try:

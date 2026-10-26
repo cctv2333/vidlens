@@ -54,8 +54,12 @@ def model_dir() -> Path:
     env = os.environ.get("VIDLENS_TAGGING_DIR")
     if env:
         return Path(env).expanduser()
-    root = os.environ.get("VIDLENS_MODEL_ROOT")
-    base = Path(root).expanduser() if root else Path(r"D:\dev\models")
+    try:
+        import vidlens as core          # same resolution as whisper/OCR: no baked-in D:
+        base = core.models_root()
+    except Exception:
+        root = os.environ.get("VIDLENS_MODEL_ROOT")
+        base = Path(root).expanduser() if root else Path.home() / ".cache" / "vidlens-models"
     return base / "audio-tagging" / "ced-mini"
 
 

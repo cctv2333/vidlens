@@ -101,12 +101,12 @@ def install_where() -> str:
         return ""
 
 
-def install(auto: bool = False) -> tuple[bool, str]:
+def install() -> tuple[bool, str]:
     """Run pip for the optional engine. Returns (ok, human readable report).
 
     Never raises and never writes to stdout: this runs inside a stdio MCP server.
-    `auto` only affects the wording (whether a person asked or a caller passed
-    install=true) — the decision to call this at all is made by the caller.
+    Whether it may be called at all is the caller's decision (install=true, or
+    VIDLENS_OCR_AUTO_INSTALL=auto); this function just does the work.
     """
     target = install_target()
     custom = bool((os.environ.get("VIDLENS_OCR_TARGET") or "").strip())
@@ -141,16 +141,25 @@ def auto_mode() -> str:
     return mode if mode in ("ask", "auto", "off") else "ask"
 
 
-def notice(python: str | None = None) -> str:
-    """Everything a person needs before deciding: size, location, how to move it."""
+def notice() -> str:
+    """Everything a person needs before deciding: size, location, how to move it.
+
+    The suggested override is derived from the machine this runs on, never typed
+    in: on a C:-only box it offers `C:\\vidlens\\ocr`, not somebody else's D:.
+    """
     target = install_target() or "（本解释器的 site-packages）"
-    py = python or sys.executable
+    py = sys.executable
     mode = auto_mode()
+    try:
+        anchor = Path(target).anchor or (target[:2] if len(target) > 1 else "")
+    except Exception:
+        anchor = ""
+    example = f"{anchor}vidlens{os.sep}ocr" if anchor else "<某个目录>"
     lines = [
         f"本地 OCR 还没装（可选功能：下载约 {OCR_DOWNLOAD_MB}MB，占盘 150–{OCR_DISK_MB}MB，"
         "自选目录要自带 numpy 时偏大）。",
         f"- **会装到**：{target}",
-        "- **要换盘/换目录**：设环境变量 `VIDLENS_OCR_TARGET=D:\\vidlens\\ocr` 再调用一次，"
+        f"- **要换盘/换目录**：设环境变量 `VIDLENS_OCR_TARGET={example}` 再调用一次，"
         "就装到那里（该目录会自动加入 import 路径，不写系统目录）",
     ]
     if mode == "off":

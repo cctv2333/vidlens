@@ -92,24 +92,87 @@ class TimeCoercionTests(unittest.TestCase):
 
 
 class ModelDirTests(unittest.TestCase):
-    """On POSIX the Windows default must never be created (it would shadow ~/.cache)."""
+    """Model paths must not depend on a drive letter that belongs to one machine.
+
+    `D:\\dev\\models` was chosen whenever a D: drive existed — true for a great
+    many strangers who never created that directory. It is now a candidate only
+    when it is really there, and everything else resolves per-user.
+    """
 
     def test_posix_has_no_windows_candidate(self):
         dirs = [d for d in C._model_dirs("posix") if d]
         self.assertNotIn("D:\\dev\\models\\whisper", dirs)
 
-    def test_windows_still_prefers_the_d_drive(self):
-        self.assertEqual(C._model_dirs("nt")[1], "D:\\dev\\models\\whisper")
+    def test_legacy_d_dir_is_skipped_when_absent(self):
+        with mock.patch.object(C, "_LEGACY_MODEL_DIR", Path("Z:/nope/nothing-here")), \
+                mock.patch.dict(os.environ, {"VIDLENS_MODEL_DIR": "", "VIDLENS_MODEL_ROOT": ""}):
+            dirs = [d for d in C._model_dirs("nt") if d]
+            root = C.models_root()
+        self.assertFalse(any(d.startswith("Z:\\nope") for d in dirs), dirs)
+        self.assertIn("vidlens", root.as_posix(), root)
+
+    def test_models_root_follows_the_env(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_MODEL_ROOT": r"E:\weights"}):
+            self.assertEqual(C.models_root(), Path(r"E:\weights"))
+
+    def test_models_root_uses_the_legacy_dir_only_when_it_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp)
+            with mock.patch.object(C, "_LEGACY_MODEL_DIR", legacy), \
+                    mock.patch.dict(os.environ, {"VIDLENS_MODEL_ROOT": ""}):
+                self.assertEqual(C.models_root(), legacy)
 
     def test_fallback_creates_the_hf_cache_when_nothing_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             with mock.patch.object(Path, "home", return_value=home), \
-                    mock.patch.object(C, "_WIN_MODEL_DIR", str(home / "gone" / "whisper")), \
-                    mock.patch.dict(os.environ, {"VIDLENS_MODEL_DIR": ""}):
+                    mock.patch.object(C, "_LEGACY_MODEL_DIR", home / "gone"), \
+                    mock.patch.object(C, "data_home", return_value=home / "data"), \
+                    mock.patch.dict(os.environ, {"VIDLENS_MODEL_DIR": "",
+                                                 "VIDLENS_MODEL_ROOT": ""}):
                 got = Path(C.model_dir())
             self.assertEqual(got, home / ".cache" / "whisper")
             self.assertTrue(got.is_dir())
+
+
+class NoPersonalPathsTests(unittest.TestCase):
+    """The shipped code must not carry this author's drive letters or username.
+
+    Every path the product prints has to be derived at runtime, because the
+    person reading it has a different machine.
+    """
+
+    RUNTIME = ("vidlens.py", "vidlens_models.py", "vidlens_audioevents.py",
+               "vidlens_sensevoice.py", "vidlens_ocr.py", "vidlens_web.py",
+               "vidlens_extra.py", "vl_mcp.py")
+
+    def _sources(self):
+        for name in self.RUNTIME:
+            p = ROOT / name
+            if p.exists():
+                yield name, p.read_text(encoding="utf-8")
+
+    def test_no_hardcoded_username(self):
+        for name, text in self._sources():
+            self.assertNotIn(r"C:\Users\yu", text, f"{name} bakes in a user profile")
+            self.assertNotIn("flashvoices\\models\\sense-voice-large.onnx\"", text, name)
+
+    def test_the_legacy_drive_path_appears_once_and_as_a_candidate(self):
+        hits = []
+        for name, text in self._sources():
+            for i, line in enumerate(text.splitlines(), 1):
+                if r"D:\dev\models" in line and not line.strip().startswith("#"):
+                    hits.append(f"{name}:{i}")
+        self.assertLessEqual(len(hits), 1, f"expected one legacy constant, got {hits}")
+
+    def test_ocr_notice_does_not_offer_a_foreign_drive(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_TARGET": ""}):
+            target = M.ocr.install_target()
+        example_drive = Path(target).anchor
+        notice = M.ocr.notice()
+        if example_drive and example_drive.upper().startswith("C:"):
+            self.assertNotIn("VIDLENS_OCR_TARGET=D:", notice)
+            self.assertIn("C:", notice)
 
 
 class SelectorTests(unittest.TestCase):
