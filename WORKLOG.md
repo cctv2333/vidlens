@@ -6,6 +6,7 @@
 
 | # | 日期 | 标题 | 状态 | 归档 |
 |---|---|---|---|---|
+| V-014 | 2026-10-26 | 音频模型也接下载链路：`vidlens_models(action="download")` + whisper 不再静默下载 + 乱码提示修复 | 已完成 | — |
 | V-013 | 2026-10-26 | 去掉发布物里的本机路径（B-065）+ 清 4 处死代码 + 两条"无个人路径"护栏 | 已完成 | — |
 | V-012 | 2026-10-26 | 内置本地 OCR（RapidOCR）：`video_ocr` + 水印/图表帧判定 + 许可证登记 | 已完成 | — |
 | V-011 | 2026-10-26 | 外部 AI 实测反馈修复：无人声误判 / 摘要取样偏差 / 大图 base64 / 成本自述 / 口径时间戳 | 已完成 | — |
@@ -19,6 +20,39 @@
 | V-003 | 2026-10-25 | 硬编码/魔法数字审计与字幕/抽样能力验收 | 已完成 | — |
 | V-002 | 2026-10-25 | 审计 P1/P2 修复：字幕优先、cookie、锁、注入扫描、缓存与边界 | 已完成 | — |
 | V-001 | 2026-10-25 | plan() / pauses.json 双形态崩溃修复 | 已完成 | — |
+
+---
+
+## 2026-10-26 音频模型也接上下载链路（V-014）
+
+- **触发**：用户问「OCR 建立了下载链路。那音频模型呢？也是这样做的吗？我们只能在我们的环境上实现，
+  要看很多结果只能看别人的环境」。
+- **事实（先查再改）**：三个音频模型、三条完全不同的路——
+  - **whisper**：`transcribe()` 先 `local_files_only=True`，失败就 `local_files_only=False`
+    → 第一次转写**静默拉 484MB**。没有提示、没有大小、没有落点。
+  - **CED-mini**：只有一句人工提示，指向插件里的 `tools/fetch_sound_model.py`（而那个脚本
+    `default_dir()` 还硬编码 `D:\dev\models`，提示行本身是 GBK/UTF-8 混写的乱码）。
+  - **SenseVoice**：根本没有下载路径，只能"你机器上已经有 FlashVoice"。
+- **改动**：
+  - `vidlens_models.ACQUIRABLE` + `acquire(name, confirm)` + `install_dir()` + `install_notice()`：
+    规则与 OCR 完全一致——先报「大小 / 落点 / 换目录 / 怎么确认」，`confirm=true` 才下，
+    下完回报真实路径。`VIDLENS_MODEL_AUTO_DOWNLOAD=ask|auto|off`，`auto` **只对 ≤20MB 生效**。
+  - 工具 `vidlens_models(action="download", name=..., confirm=...)`；`list` 现在同时打印
+    `MODEL_ROOT` / whisper 目录 / 声音事件目录 —— AI 可以直接把这些路径告诉用户。
+  - whisper 静默下载改为 `acquire()`，不再自己 `local_files_only=False`。
+  - CED 的 `install_hint()` 改为指向 `action=download`（手动说明保留）。
+  - 插件脚本的乱码提示行与硬编码 `D:\dev\models` 一起修掉。
+- **验证**：
+  - `Ran 192 tests ... OK (skipped=1)`（新增 `ModelAcquireTests` 8 项：notice 字段、
+    未知模型、ask 不下、auto 也不下 484MB、auto 下 10MB、confirm 覆盖 ask、模式解析、
+    `install_dir` 与读取端一致）。
+  - **真下了一次**：`VIDLENS_TAGGING_DIR=D:\vidlens\ced-download-test` + `confirm=True`
+    → 10.0MB / 52.3s（先试 huggingface.co，失败自动换 hf-mirror），下完 `ae.available()`
+    立刻为 True、`model_paths()` 指向该目录（装与读同一个函数，不会各说各话）。
+  - 插件自检 128/128。
+- **没做（并说明原因）**：SenseVoice（937MB，且需要 tokens.txt）只给说明不代下；whisper 的
+  484MB 真下没在本机跑（会把仓库体积翻倍），但路径与 gating 都有测试覆盖。
+- **状态**：已完成。
 
 ---
 

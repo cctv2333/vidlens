@@ -101,8 +101,10 @@ def install_hint() -> str:
     if missing:
         lines.append("- 当前缺失: " + "、".join(f"`{p}`" for p in missing))
     lines += [
-        "- 下载（不随包发、不自动下）: 运行 `tools/fetch_sound_model.py`"
-        "（在本插件仓库里），或手动从 "
+        f"- **让我下**（约 10.4MB，装到上面那个目录）："
+        f"`vidlens_models(action=\"download\", name=\"ced-mini\", confirm=true)`",
+        f"- **想以后自动下**：`VIDLENS_MODEL_AUTO_DOWNLOAD=auto`（≤20MB 的模型才会自动下）",
+        "- 手动也行：从 "
         "https://hf-mirror.com/k2-fsa/sherpa-onnx-ced-mini-audio-tagging-2024-04-19 "
         "取这两个文件",
         "- 自定义位置: `VIDLENS_TAGGING_MODEL` / `VIDLENS_TAGGING_LABELS`",

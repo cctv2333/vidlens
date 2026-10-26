@@ -1300,11 +1300,13 @@ def video_comments(url: str, limit: int = 40, with_images: bool = False) -> list
 
 
 @mcp.tool(structured_output=False)
-def vidlens_models(action: str = "list") -> str:
-    """本地模型目录 + 硬件建议。只读，不自动下载；下载前必须先问用户。
-    action=list 看目录；action=recommend 看这台机器适合哪个。"""
+def vidlens_models(action: str = "list", name: str = "", confirm: bool = False) -> str:
+    """本地模型目录 / 硬件建议 / **下载**（大小、落点、换目录都说清）。
+    action=list 看目录（含本机解析出的真实路径）；action=recommend 看这台机器适合哪个；
+    action=download 装某个模型：先只报大小与落点，传 confirm=true 才真下。"""
     try:
-        if (action or "list").lower() in ("recommend", "推荐"):
+        act = (action or "list").strip().lower()
+        if act in ("recommend", "推荐"):
             r = models_mod.recommend()
             return ("# 本机建议\n"
                     f"- 内存: {r['ram_gb']} GB\n"
@@ -1313,8 +1315,23 @@ def vidlens_models(action: str = "list") -> str:
                     f"- 推荐 ASR: {r['recommended_asr']}\n"
                     f"- 可选音频事件: {r['optional_audio']}（不是 ASR）\n"
                     f"- {r['note']}")
+        if act in ("download", "install", "下载"):
+            if not name:
+                return ("要给 name。可下载的: "
+                        + ", ".join(sorted(models_mod.ACQUIRABLE))
+                        + f"\n（会自动下载的只有 ≤20MB 的模型；现在是 "
+                        f"{models_mod.auto_mode()} 模式）")
+            ok, report = models_mod.acquire(name, confirm=confirm)
+            if ok:
+                return f"[已就绪] {report}"
+            # Not allowed yet: `report` is the notice (size, target, how to move).
+            return ("[需要确认] " if not confirm else "[失败] ") + report
         items = models_mod.catalog()
-        lines = ["# 本地模型目录（只读，不会自动下载）", ""]
+        lines = ["# 本地模型目录（只读；要下就 action=\"download\"）", "",
+                 f"- 模型根目录: `{models_mod.MODEL_ROOT}`",
+                 f"- whisper 目录: `{models_mod.WHISPER_ROOT}`",
+                 f"- 声音事件目录: `{models_mod.install_dir('ced-mini')}`",
+                 "", ]
         for m in items:
             mark = "已安装" if m["installed"] else "未安装"
             lines.append(f"- **{m['name']}**  {m['size_mb']}MB  [{mark}]  {m['purpose']}")
@@ -1322,7 +1339,8 @@ def vidlens_models(action: str = "list") -> str:
         r = models_mod.recommend()
         lines += ["", f"本机: 内存 {r['ram_gb']}GB / CPU {r['cpu_cores']} 核 / "
                       f"磁盘 {r['disk_free_gb']}GB；推荐 **{r['recommended_asr']}**。",
-                  "下载前先征得用户同意；不会自动拉模型。"]
+                  "换位置：`VIDLENS_MODEL_ROOT`（整棵）/ `VIDLENS_MODEL_DIR`（whisper）/ "
+                  "`VIDLENS_TAGGING_DIR`（声音事件）。不会在没人同意时下载。"]
         return "\n".join(lines)
     except Exception as e:
         return _err(e)

@@ -182,7 +182,7 @@ vidlens_doctor          # 会多一行 ocr: rapidocr 可用
 | 工具 | 下载量 | 用途 |
 |---|---|---|
 | `video_comments(url, limit=40)` | 0 | 评论互动比、正/负面词频、争议度启发式 |
-| `vidlens_models(action=list)` | 0 | 本地模型目录 + 硬件建议；**只读，不自动下载** |
+| `vidlens_models(action=list)` | 0 | 本地模型目录 + 硬件建议 + **本机真实路径**；要下用 `action=download`（confirm 才真下） |
 | `vidlens_doctor()` | 0 | 自检：python/ffmpeg/yt-dlp/依赖/模型/磁盘/网络 |
 
 Chatbox / Claude / Cursor 里加 stdio server 的三项：
@@ -284,10 +284,26 @@ vl models --recommend            # 按内存/CPU/磁盘给建议
 - 实测 BV1PvHX61EgV：`bgm_info` = 《Macarena (River Re-Mix 103 BPM)》，
   `video_meta` 已正确显示。
 
-## 模型目录 / CED-mini / AcoustID
+## 模型目录 / 下载 / CED-mini / AcoustID
 
-`vidlens_models`（或 `vl models`）只读列出本机模型、体积、用途和硬件建议；
-**不会自动下载**，下载前先问用户。
+`vidlens_models`（或 `vl models`）列出本机模型、体积、用途、硬件建议，**以及本机解析出的
+真实路径**（`MODEL_ROOT` / whisper 目录 / 声音事件目录）。下载走同一条链路，规则和 OCR 一致：
+
+```
+vidlens_models(action="list")                                  # 目录 + 真实路径
+vidlens_models(action="download", name="ced-mini")             # 只报大小与落点
+vidlens_models(action="download", name="ced-mini", confirm=true)  # 真下，回报装到哪
+```
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `VIDLENS_MODEL_ROOT` | 整棵模型目录（whisper / sensevoice / audio-tagging 都在下面） | `%LOCALAPPDATA%\vidlens\models`（POSIX: XDG）；旧的 `D:\dev\models` 仅在它已存在时沿用 |
+| `VIDLENS_MODEL_DIR` / `VIDLENS_TAGGING_DIR` | 单独覆盖 whisper / 声音事件 | 上面目录的子目录 |
+| `VIDLENS_MODEL_AUTO_DOWNLOAD` | `ask` 先问 / `auto` 自动下（**只对 ≤20MB**）/ `off` 只给命令 | `ask` |
+
+可下载：`ced-mini` 10MB、`whisper-tiny` 75MB、`whisper-base` 145MB、`whisper-small` 484MB。
+**whisper 不再静默下载**：以前第一次转写会直接 `local_files_only=False` 拉几百 MB，
+现在先给大小与落点，确认后才下。SenseVoice（937MB）只给说明，不代下。
 
 - **CED-mini**（已接入，V-007）：sherpa-onnx 的 `AudioTagging` + `k2-fsa` int8 模型
   （10.4MB）+ `class_labels_indices.csv`（14.7KB），AudioSet 527 类声音事件分类，
@@ -296,8 +312,8 @@ vl models --recommend            # 按内存/CPU/磁盘给建议
   水声（Water / Water tap）、杯子碰撞（Chink, clink）、拖拽（Scrape）、塑料袋
   （Crumpling, crinkling）、掌声/笑声等。**喝水/吞咽没有对应 AudioSet 类**，只能靠
   水声 + 画面推断；要准需 CLAP 零样本或自训小分类器。
-  实测：加载 0.14s、28s 音频推理 43ms。下载：`tools/fetch_sound_model.py`（插件仓库内），
-  或 `VIDLENS_TAGGING_MODEL` / `VIDLENS_TAGGING_LABELS` 指向已有文件；**不自动下载**。
+  实测：加载 0.14s、28s 音频推理 43ms；下载链路实测 10.0MB / 52s（hf-mirror 回退），
+  下完立刻被 `available()` 认出来（同一个解析函数，装和读不会各说各话）。
 - **AcoustID**：音频指纹检索，不是 AI 模型。需要 Chromaprint `fpcalc` + 客户端
   API key，官方限 3 请求/秒、仅非商业；返回 MusicBrainz 记录，不保证歌名。
   优先级低于平台元数据：B 站 `player/wbi/v2` 的 `bgm_info` 直接给歌名和链接，

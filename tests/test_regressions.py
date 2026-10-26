@@ -23,6 +23,7 @@ import vidlens_extra as E     # noqa: E402
 import vidlens_sanitize as S  # noqa: E402
 import vidlens_web as W       # noqa: E402
 import vl_mcp as M            # noqa: E402
+import vidlens_models as M_mod  # noqa: E402
 
 
 class PackagingTests(unittest.TestCase):
@@ -133,6 +134,78 @@ class ModelDirTests(unittest.TestCase):
                 got = Path(C.model_dir())
             self.assertEqual(got, home / ".cache" / "whisper")
             self.assertTrue(got.is_dir())
+
+
+class ModelAcquireTests(unittest.TestCase):
+    """Audio weights need the same story as the OCR engine: size, place, consent.
+
+    Before this, whisper fell through to `local_files_only=False` (a silent
+    download of hundreds of MB) and CED-mini had only a manual hint pointing at a
+    script with a hardcoded D: path.
+    """
+
+    def test_notice_names_size_directory_and_how_to_move(self):
+        n = M_mod.install_notice("ced-mini")
+        self.assertIn("10MB", n)
+        self.assertIn(str(M_mod.install_dir("ced-mini")), n)
+        self.assertIn("confirm=true", n)
+        self.assertIn("VIDLENS_MODEL_ROOT", n)
+
+    def test_unknown_model_is_refused_with_the_list(self):
+        ok, report = M_mod.acquire("nope")
+        self.assertFalse(ok)
+        self.assertIn("未知模型", report)
+        self.assertIn("ced-mini", report)
+
+    def test_ask_mode_does_not_download(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_MODEL_AUTO_DOWNLOAD": "ask"}), \
+                mock.patch.object(M_mod, "_download_file") as dl:
+            ok, report = M_mod.acquire("ced-mini")
+        self.assertFalse(ok)
+        self.assertIn("会装到", report)
+        dl.assert_not_called()
+
+    def test_auto_mode_still_refuses_a_half_gigabyte(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_MODEL_AUTO_DOWNLOAD": "auto"}), \
+                mock.patch.object(M_mod, "_download_file") as dl:
+            ok, report = M_mod.acquire("whisper-small")
+        self.assertFalse(ok)
+        self.assertIn("484MB", report)
+        dl.assert_not_called()
+
+    def test_auto_mode_fetches_the_small_model(self):
+        def fake(urls, dst, expect=0, progress=None):
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"x" * 16)
+            return 16
+
+        with mock.patch.dict(os.environ, {"VIDLENS_MODEL_AUTO_DOWNLOAD": "auto"}), \
+                mock.patch.object(M_mod, "_ced_installed", return_value=False), \
+                mock.patch.object(M_mod, "_download_file", side_effect=fake):
+            ok, report = M_mod.acquire("ced-mini")
+        self.assertTrue(ok, report)
+        self.assertIn("ced-mini", report)
+
+    def test_confirm_wins_over_ask(self):
+        def fake(urls, dst, expect=0, progress=None):
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"x" * 16)
+            return 16
+
+        with mock.patch.dict(os.environ, {"VIDLENS_MODEL_AUTO_DOWNLOAD": "ask"}), \
+                mock.patch.object(M_mod, "_ced_installed", return_value=False), \
+                mock.patch.object(M_mod, "_download_file", side_effect=fake):
+            ok, _report = M_mod.acquire("ced-mini", confirm=True)
+        self.assertTrue(ok)
+
+    def test_auto_mode_parsing(self):
+        for value, want in (("", "ask"), ("AUTO", "auto"), ("off", "off"), ("x", "ask")):
+            with mock.patch.dict(os.environ, {"VIDLENS_MODEL_AUTO_DOWNLOAD": value}):
+                self.assertEqual(M_mod.auto_mode(), want, value)
+
+    def test_install_dir_matches_the_reader(self):
+        import vidlens_audioevents as ae
+        self.assertEqual(M_mod.install_dir("ced-mini"), ae.model_dir())
 
 
 class NoPersonalPathsTests(unittest.TestCase):

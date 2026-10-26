@@ -566,9 +566,19 @@ def transcribe(path: Path, model="small", device="cpu", compute="int8",
     try:
         m = WhisperModel(model, local_files_only=True, **common)
         local_only = True
-    except Exception:
-        m = WhisperModel(model, local_files_only=False, **common)
-        local_only = False
+    except Exception as miss:
+        # It used to fall through to `local_files_only=False`, i.e. faster-whisper
+        # pulled hundreds of MB on a first call without telling anyone. Ask first,
+        # and say where it would land.
+        import vidlens_models as models_mod
+        # No confirm here: `auto` only waives the question for small models, and a
+        # half-gigabyte whisper is not one of them.
+        ok, report = models_mod.acquire(f"whisper-{model}")
+        if not ok:
+            raise SystemExit(f"whisper 模型 {model!r} 不在本地（{type(miss).__name__}）。\n"
+                             f"{report}")
+        m = WhisperModel(model, local_files_only=True, **common)
+        local_only = True
     if prompt is None and lang and lang.startswith("zh"):
         prompt = "以下是普通话的发言，请用简体中文转写。"
     segs, info = m.transcribe(c.load_audio(str(path)), language=lang, initial_prompt=prompt,
