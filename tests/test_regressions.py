@@ -39,7 +39,12 @@ class PackagingTests(unittest.TestCase):
                          "pyproject.toml starts with a UTF-8 BOM; TOML cannot parse it")
 
     def test_pyproject_declares_the_ocr_extra(self):
-        import tomllib
+        # tomllib is 3.11+ and the project supports 3.10, so this check simply
+        # cannot run there — skipping is honest, importing would be a hard error.
+        try:
+            import tomllib
+        except ModuleNotFoundError:      # pragma: no cover - py3.10 only
+            self.skipTest("tomllib is Python 3.11+")
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         extras = data["project"]["optional-dependencies"]
         self.assertIn("ocr", extras)
