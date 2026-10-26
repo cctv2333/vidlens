@@ -6,6 +6,7 @@
 
 | # | 日期 | 标题 | 状态 | 归档 |
 |---|---|---|---|---|
+| V-010 | 2026-10-26 | awesome-dsh-plugin 收录 PR #9422 转绿（age 门槛 / 手动触发路径 / README 自动生成） | 已完成 | — |
 | V-009 | 2026-10-26 | 上下文预算治理：digest 默认 / 分段 watch / 预算台账 / 调用去重 / schema 瘦身 | 已完成 | — |
 | V-008 | 2026-10-25 | PyPI 打包 + 跨进程媒体锁 + 两仓库拆分（vidlens / dsh-vidlens） | 已完成 | — |
 | V-007 | 2026-10-25 | 声音事件接入（CED-mini + AudioSet 527）：video_soundscape + DSH 插件 | 已完成 | — |
@@ -15,6 +16,37 @@
 | V-003 | 2026-10-25 | 硬编码/魔法数字审计与字幕/抽样能力验收 | 已完成 | — |
 | V-002 | 2026-10-25 | 审计 P1/P2 修复：字幕优先、cookie、锁、注入扫描、缓存与边界 | 已完成 | — |
 | V-001 | 2026-10-25 | plan() / pauses.json 双形态崩溃修复 | 已完成 | — |
+
+---
+
+## 2026-10-26 awesome-dsh-plugin 收录 PR 转绿（V-010）
+
+- **目标**：把条目合进 `awesome-dsh-plugin`（dsh-market / Discover 的数据源），
+  确认「仓库满 1 天」这条硬门槛不会再卡住。
+- **事实（先查后做）**：
+  - gate 的红来自 `repository is 0.3 days old (needs 1)`，它的提示说「会自己重跑，
+    约 18h 后清掉」——**这句偏乐观**：自助复查 `regate.yml` 是 `cron: 19 */6 * * *`
+    （每 6 小时一轮），而且对 age 类失败有 **24h 冷却**（`ranAt + 24h`）。gate 跑在
+    2026-10-25T14:35Z，所以最早能重跑的是 2026-10-26T20:19Z，不是 18h 后的 08:3xZ。
+  - `regate.yml` 每轮 `MAX_RERUNS=20`、blocking 队列按 PR 号升序；本仓库每分钟都在进
+    PR（同时开着的 ~100+），#9422 排在队尾，可能还要等好几天。
+  - 我们不是该仓库协作者：`POST /actions/runs/<id>/rerun` 返回
+    `403 Must have admin rights to Repository` —— 手动重跑这条路对 fork 作者不通。
+  - 唯一可用的触发是给 PR 一个新事件：`pr-check.yml` 的 `on: pull_request`（默认含
+    `reopened`），close+reopen 会重算 merge commit 并重跑 `PR check`，其完成事件再经
+    `workflow_run` 拉起 `Submission gate`。
+- **改动**：close（08:41:05Z）→ reopen（08:41:08Z）。没有 push、没有改条目。
+- **验证**：
+  - 新 `PR check` run 40293989025 起于 08:41:12Z，08:54:14Z **success**；
+  - 新 `Submission gate` check run 121480730655 08:54:48Z **success**，
+    结论原文 `Entries look good` / `All 1 submitted entry passes: dsh.bundle declared,
+    repo old enough, enough commits.`；
+  - PR：`state=open mergeable=True mergeable_state=clean changed_files=1`（只动
+    `data/plugins/cctv2333__dsh-vidlens.yml`）。
+- **顺带确认**：README 是**生成物**——合并进 main 后 `sync-readme.yml`（`on: push` 到
+  `data/plugins/**`）自动重生成中英两份并提交；贡献者自己提交重生成也接受，但
+  **不要手工改 README**（两仓同时改同一批生成行正是这个列表之前 218/296 冲突的原因）。
+- **状态**：已完成（等维护者合并）。
 
 ---
 

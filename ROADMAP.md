@@ -33,7 +33,7 @@
 |---|---|---|---|
 | D-1 | 仓库 topics | ✅ | 两个仓库都已打：`dsh-plugin` `dsh` `deepseek-harness` `cordis` `mcp` + 领域词 |
 | D-2 | 仓库 description | ✅ | 中英都写清了「18 个工具 / 不下载整片」 |
-| D-3 | 收录进 awesome-dsh-plugin（= dsh-market 与 Discover 的数据源） | ⏳ 等仓库满 1 天 | 条目已写好并推到 fork 分支 `add-dsh-vidlens`；该列表 CI 硬性要求仓库创建满 1 天，2026-10-26 16:34 (+08:00) 后开 PR |
+| D-3 | 收录进 awesome-dsh-plugin（= dsh-market 与 Discover 的数据源） | ⏳ 等维护者合并 | [PR #9422](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/9422) 已开，两个检查全绿（`check` ✅ / `Submission gate` ✅「All 1 submitted entry passes」），`mergeable_state=clean`，只改 1 个文件 `data/plugins/cctv2333__dsh-vidlens.yml`。合并后 README 由 `sync-readme.yml` 自动重生成，**不要手工改 README** |
 | D-4 | 商店图标 | ✅ | `assets/icon-180.png`（180×180，GitHub 托管的位图，条目里用 `icon:` 指向 raw） |
 | D-5 | 截图（dsh-market 详情页） | ⏳ | 需要真实运行截图，`screenshots.json` 放在本仓库，1–8 张 |
 
