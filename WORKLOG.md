@@ -46,7 +46,7 @@
   `brief` 的"来源"块同理。`video_subs` / `video_comments` / `video_full` 对本地输入直接说明"没有这个东西"，不编造。
 - **验收**：`demo\meeting.mp4` 上跑通 probe / brief（ASR 覆盖 100%、77 字）/ sheet（4×3 带时间码）/ OCR（3 帧，无字=0 段）；
   测试 192 → **205**（+10 LocalSourceTests、+3 MCP `_drop_temp`/本地 meta/subs）；插件 selftest 128 → **130**。
-- **版本**：PyPI 1.5.3 → **1.6.0**（功能新增）；插件 1.3.3 → **1.4.0**；`vl_mcp` server version 1.4.0 → 1.6.0（一直是陈的）。
+- **版本**：PyPI 1.5.3 → **1.6.0**（功能新增）；插件 1.3.3 → **1.4.0**；`vl_mcp` server version 1.4.0 → 1.6.0（一直是陈的）。两仓均已发布（tag `v1.6.0` / `v1.4.0`，OIDC 自动发；从 PyPI 拉下 1.6.0 的 wheel 复核过 `local_path` 与 `_drop_temp` 都在里面）。
 ## 2026-10-26 音频模型也接上下载链路（V-014）
 
 - **触发**：用户问「OCR 建立了下载链路。那音频模型呢？也是这样做的吗？我们只能在我们的环境上实现，

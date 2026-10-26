@@ -4,8 +4,8 @@
 
 新接手先看这六件事：
 
-1. **两个仓库**：`cctv2333/vidlens`（Python + MCP，PyPI `vidlens-mcp` **1.6.0**）、
-   `cctv2333/dsh-vidlens`（DSH 插件，npm `dsh-vidlens` **1.4.0**）。插件通过常驻桥
+1. **两个仓库**：`cctv2333/vidlens`（Python + MCP，PyPI `vidlens-mcp` **1.6.0**（已发布））、
+   `cctv2333/dsh-vidlens`（DSH 插件，npm `dsh-vidlens` **1.4.0**（已发布））。插件通过常驻桥
    `bridge/vidlens_bridge.py` 复用 `vl_mcp` 的函数，不存在第二份实现。
    **插件不含 Python 核心**：它 `import vidlens`，拿不到就回一句 pip 命令
    （`_import_error_text`），所以插件用户装核心走 PyPI，不走 GitHub。
