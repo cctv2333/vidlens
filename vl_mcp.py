@@ -376,6 +376,11 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
     长视频（>20 分钟且无字幕）默认只给章节建议，不逐字转写；确实要全量传 full=true。
     方言可传 lang=yue 等，或 prompt="以下是粤语，请保留方言用词"。
     需要看画面再用 video_sheet / video_frames，不要下整片。"""
+    want = str(level or "digest").strip().lower()
+    if want not in ("digest", "full"):
+        # Fail before transcribing anything: an invalid level must not cost an ASR run.
+        return (f'ERROR: level 只能是 "digest"（默认，约 1.5k 字）或 "full"'
+                f'（6–9k 字全文），收到 {level!r}。')
     try:
         with _LOCK:
             meta, d = _dir(url)
@@ -412,7 +417,7 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
         if scan_error:
             extra += (f"\n[注意] 镜头切点扫描失败（{scan_error[:120]}），报告里没有 cuts；"
                       "台词与章节不受影响。")
-        if str(level or "").lower() == "full":
+        if want == "full":
             return brief[:MAX_BRIEF_CHARS] + extra
         return _digest(meta, rows, dur, chapters, threats, source, brief, d) + extra
     except SystemExit as e:

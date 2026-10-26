@@ -263,7 +263,7 @@ def fetch_meta(url: str) -> tuple[dict, list[dict]]:
         if is_login_wall(err):
             raise SystemExit("STOP: this page needs a login / paid account. We do not bypass that."
                              + cookie_hint(err))
-        raise SystemExit(f"meta failed rc={rc}: {err.strip()[:400]}{cookie_hint(err)}")
+        raise SystemExit(f"meta failed rc={rc}: {err.strip()[:220]}{cookie_hint(err)}")
     raw = json.loads(out[out.find("{"):])
     bad = check_meta(raw)
     if bad:
@@ -441,7 +441,7 @@ def download_audio(url: str, d: Path, max_mb: float, force: bool,
     rc, out, err = run_yt(["-f", "ba/b", "-o", str(d / "audio.%(ext)s"), url])
     cands = [p for p in d.glob("audio.*") if p.suffix.lower() in AUDIO_EXT]
     if not cands:
-        raise SystemExit(f"audio download failed rc={rc}: {err.strip()[:400]}"
+        raise SystemExit(f"audio download failed rc={rc}: {err.strip()[:220]}"
                          + cookie_hint(err))
     f = max(cands, key=lambda p: p.stat().st_size)
     mb = f.stat().st_size / 1048576
@@ -494,7 +494,7 @@ def download_video_lowest(url: str, d: Path, height: int = 360) -> Path:
                            "-o", str(d / "video.%(ext)s"), url])
     cands = [p for p in d.glob("video.*") if p.suffix.lower() in (".mp4", ".mkv", ".webm")]
     if not cands:
-        raise SystemExit(f"video download failed rc={rc}: {err.strip()[:300]}"
+        raise SystemExit(f"video download failed rc={rc}: {err.strip()[:180]}"
                          + cookie_hint(err))
     return max(cands, key=lambda p: p.stat().st_size)
 
@@ -508,7 +508,7 @@ def download_section(url: str, d: Path, t0: float, t1: float,
     rc, out, err = run_yt(args)
     cands = [p for p in d.glob("sec.*") if p.suffix.lower() in (".mp4", ".mkv", ".webm", ".m4a")]
     if not cands:
-        raise SystemExit(f"section download failed rc={rc}: {err.strip()[:400]}"
+        raise SystemExit(f"section download failed rc={rc}: {err.strip()[:220]}"
                          + cookie_hint(err))
     return max(cands, key=lambda p: p.stat().st_size)
 
@@ -523,7 +523,7 @@ def download_audio_section(url: str, d: Path, t0: float, t1: float,
     rc, out, err = run_yt(args)
     cands = [p for p in d.glob("sec.*") if p.suffix.lower() in AUDIO_EXT]
     if not cands:
-        raise SystemExit(f"audio section failed rc={rc}: {err.strip()[:300]}"
+        raise SystemExit(f"audio section failed rc={rc}: {err.strip()[:180]}"
                          + cookie_hint(err))
     f = max(cands, key=lambda p: p.stat().st_size)
     mb = f.stat().st_size / 1048576
