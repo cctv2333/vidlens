@@ -17,15 +17,30 @@ CPU 推理。PP-OCRv6 的 det/rec/cls 三个模型**随 wheel 一起装**（约 
 from __future__ import annotations
 
 import difflib
+import importlib
 import logging
+import os
 import re
+import subprocess
+import sys
+import sysconfig
 import threading
+import time
 from pathlib import Path
 
 _LOCK = threading.Lock()
 _ENGINE = None
 _IMPORT_ERROR = ""
 _ENGINE_NAME = "rapidocr"
+
+# One `pip install rapidocr` pulls opencv-python-headless with it; measured on
+# Windows: ~80MB down, ~150MB on disk (cv2 alone is 112MB). The number is shown
+# before downloading, because "80MB到C盘" is something a user may want to refuse.
+OCR_PACKAGE = "rapidocr"
+OCR_DOWNLOAD_MB = 80
+OCR_DISK_MB = 220            # measured: 150MB next to an existing numpy, 220MB
+                             # when a custom --target has to carry its own copy
+INSTALL_TIMEOUT_S = 900
 
 MIN_SCORE = 0.40           # below this the box is usually texture, not text
 MIN_CHARS = 2              # a single character is a icon/logo more often than not
@@ -58,6 +73,94 @@ def available() -> tuple[bool, str]:
         _IMPORT_ERROR = f"{type(e).__name__}: {e}"
         return False, _IMPORT_ERROR
     return True, ""
+
+
+def install_target() -> str:
+    """Where a `pip install` would put it. Override with VIDLENS_OCR_TARGET.
+
+    Default is this interpreter's own site-packages — on Windows that is usually
+    the C: drive, which is exactly the thing a user may want to move. Setting
+    VIDLENS_OCR_TARGET installs into that directory instead and puts it on
+    sys.path, so nothing else has to change.
+    """
+    custom = (os.environ.get("VIDLENS_OCR_TARGET") or "").strip()
+    if custom:
+        return str(Path(custom).expanduser())
+    try:
+        return sysconfig.get_paths().get("purelib") or ""
+    except Exception:
+        return ""
+
+
+def install_where() -> str:
+    """The directory the engine is actually importable from (after a successful install)."""
+    try:
+        import rapidocr
+        return str(Path(rapidocr.__file__).resolve().parent)
+    except Exception:
+        return ""
+
+
+def install(auto: bool = False) -> tuple[bool, str]:
+    """Run pip for the optional engine. Returns (ok, human readable report).
+
+    Never raises and never writes to stdout: this runs inside a stdio MCP server.
+    `auto` only affects the wording (whether a person asked or a caller passed
+    install=true) — the decision to call this at all is made by the caller.
+    """
+    target = install_target()
+    custom = bool((os.environ.get("VIDLENS_OCR_TARGET") or "").strip())
+    cmd = [sys.executable, "-m", "pip", "install", "--no-input",
+           "--disable-pip-version-check", "-q", OCR_PACKAGE]
+    if custom and target:
+        cmd += ["--target", target]
+    t0 = time.time()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=INSTALL_TIMEOUT_S)
+    except Exception as e:              # no pip, no network, timeout
+        return False, f"下载失败：{type(e).__name__}: {e}"
+    took = time.time() - t0
+    if proc.returncode != 0:
+        tail = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()[-3:]
+        return False, f"pip 退出码 {proc.returncode}：{' / '.join(tail)[:400]}"
+    if custom and target:
+        if target not in sys.path:
+            sys.path.insert(0, target)
+        importlib.invalidate_caches()
+    ok, why = available()
+    if not ok:
+        return False, f"装完了但导入仍然失败：{why[:200]}"
+    return True, (f"已装 {OCR_PACKAGE} 到 {install_where() or target}"
+                  f"（下载约 {OCR_DOWNLOAD_MB}MB，用掉 {took:.0f}s）")
+
+
+def auto_mode() -> str:
+    """ask (default) | auto | off — how far `video_ocr` may go on its own."""
+    mode = (os.environ.get("VIDLENS_OCR_AUTO_INSTALL") or "ask").strip().lower()
+    return mode if mode in ("ask", "auto", "off") else "ask"
+
+
+def notice(python: str | None = None) -> str:
+    """Everything a person needs before deciding: size, location, how to move it."""
+    target = install_target() or "（本解释器的 site-packages）"
+    py = python or sys.executable
+    mode = auto_mode()
+    lines = [
+        f"本地 OCR 还没装（可选功能：下载约 {OCR_DOWNLOAD_MB}MB，占盘 150–{OCR_DISK_MB}MB，"
+        "自选目录要自带 numpy 时偏大）。",
+        f"- **会装到**：{target}",
+        "- **要换盘/换目录**：设环境变量 `VIDLENS_OCR_TARGET=D:\\vidlens\\ocr` 再调用一次，"
+        "就装到那里（该目录会自动加入 import 路径，不写系统目录）",
+    ]
+    if mode == "off":
+        lines.append(f"- **当前是 off 模式**：自己装 `\"{py}\" -m pip install {OCR_PACKAGE}`")
+    else:
+        lines.append("- **让我装**：再调用一次 `video_ocr(..., install=true)`，"
+                     f"我会先复述这句话再开始下载（约 {OCR_DOWNLOAD_MB}MB，几十秒）")
+        lines.append(f"- **想以后自动装**：设 `VIDLENS_OCR_AUTO_INSTALL=auto`"
+                     f"（现在是 {mode}）；自己装也行：`\"{py}\" -m pip install {OCR_PACKAGE}`")
+    return "\n".join(lines)
 
 
 def engine_name() -> str:

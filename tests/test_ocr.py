@@ -10,6 +10,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -150,6 +151,75 @@ class TimestampTests(unittest.TestCase):
 
     def test_zero_length_window_still_returns_one_point(self):
         self.assertEqual(O.timestamps(10.0, 5, 5.0, 5.0), [5.0])
+
+
+class InstallTests(unittest.TestCase):
+    """The engine is 80MB: say where it goes, and let the user move it.
+
+    Nobody should discover after the fact that a tool filled their C: drive.
+    """
+
+    def test_default_target_is_this_interpreter(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_TARGET": ""}, clear=False):
+            target = O.install_target()
+        self.assertTrue(target.endswith("site-packages"), target)
+
+    def test_target_can_be_moved(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_TARGET": r"D:\vidlens\ocr"}):
+            self.assertEqual(O.install_target(), r"D:\vidlens\ocr")
+
+    def test_auto_mode_defaults_to_ask(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_AUTO_INSTALL": ""}):
+            self.assertEqual(O.auto_mode(), "ask")
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_AUTO_INSTALL": "nonsense"}):
+            self.assertEqual(O.auto_mode(), "ask")
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_AUTO_INSTALL": "AUTO"}):
+            self.assertEqual(O.auto_mode(), "auto")
+
+    def test_notice_says_size_location_and_how_to_move_it(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_AUTO_INSTALL": ""}):
+            text = O.notice()
+        self.assertIn(str(O.OCR_DOWNLOAD_MB), text)
+        self.assertIn("会装到", text)
+        self.assertIn("VIDLENS_OCR_TARGET", text)
+        self.assertIn("install=true", text)
+        self.assertIn(O.install_target(), text)
+
+    def test_notice_in_off_mode_points_at_pip_instead(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_OCR_AUTO_INSTALL": "off"}):
+            text = O.notice()
+        self.assertIn("pip install", text)
+        self.assertNotIn("install=true", text)
+
+    def test_a_failed_pip_is_reported_not_raised(self):
+        class P:
+            returncode = 1
+            stderr = "ERROR: No matching distribution found for rapidocr"
+            stdout = ""
+        with mock.patch.object(O.subprocess, "run", return_value=P()):
+            ok, report = O.install()
+        self.assertFalse(ok)
+        self.assertIn("1", report)
+        self.assertIn("No matching distribution", report)
+
+    def test_custom_target_is_put_on_sys_path(self):
+        import tempfile
+
+        class P:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"VIDLENS_OCR_TARGET": tmp}), \
+                mock.patch.object(O.subprocess, "run", return_value=P()), \
+                mock.patch.object(O, "available", return_value=(True, "")):
+            ok, report = O.install()
+            try:
+                self.assertTrue(ok, report)
+                self.assertIn(tmp, sys.path)
+            finally:
+                if tmp in sys.path:
+                    sys.path.remove(tmp)
 
 
 class AttributionTests(unittest.TestCase):

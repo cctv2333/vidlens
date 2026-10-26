@@ -144,12 +144,29 @@ Windows 用 `vl.cmd`，其余平台用 `.venv/bin/python vidlens.py`。
 剔除水印与图表标签，输出可直接引用的带时间码文本（12 帧约 1.3k tokens，比逐帧看图省一个数量级）。
 
 OCR 是可选依赖，引擎是 [RapidOCR](https://github.com/RapidAI/RapidOCR)（Apache-2.0），
-PP-OCRv6 模型随包分发、约 30MB，**装好即离线，运行时不下载任何东西**：
+PP-OCRv6 模型随包分发、约 30MB，**装好即离线，运行时不下载任何东西**。
+
+**装在哪、怎么换（不装也不会坏）**：第一次调用 `video_ocr` 不会偷偷下载，而是告诉你
+「下载约 80MB、会装到 <路径>、怎么换目录」；再调一次并传 `install=true` 才开始下，
+下载前后都会把路径写进结果。
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `VIDLENS_OCR_TARGET` | 装到这个目录（自动加入 import 路径，不写系统目录） | 本解释器的 `site-packages`（Windows 上通常就是 **C 盘**） |
+| `VIDLENS_OCR_AUTO_INSTALL` | `ask` 先问（默认）/ `auto` 自动装 / `off` 只给命令 | `ask` |
 
 ```
+# 想放 D 盘、并且以后自动装：
+set VIDLENS_OCR_TARGET=D:\vidlens\ocr
+set VIDLENS_OCR_AUTO_INSTALL=auto
+
+# 或者自己装一次（推荐给 CI/多环境）：
 pip install "vidlens-mcp[ocr]"
 vidlens_doctor          # 会多一行 ocr: rapidocr 可用
 ```
+
+实测：下载约 80MB、装完占盘 150MB（已有 numpy）/ 最多 220MB（自选目录要自带 numpy），
+首次安装 18s（有 pip 缓存时）。
 
 署名与许可证见 [NOTICE.md](NOTICE.md)；与 [Umi-OCR](https://github.com/hiroi-sora/Umi-OCR)（MIT）
 的关系只是"借了离线+可换引擎的做法"，没有复制它的代码。

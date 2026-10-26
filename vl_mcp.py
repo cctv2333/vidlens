@@ -1164,16 +1164,29 @@ def video_job(job_id: str, wait_seconds: float = 0) -> str:
 
 @mcp.tool(structured_output=False)
 def video_ocr(url: str, start: str | float = "0", end: str | float = "",
-              n: int = 12, width: int = 1280) -> str:
+              n: int = 12, width: int = 1280, install: bool = False) -> str:
     """把画面上的字**读出来**（本地 OCR，离线；不靠人声、不需要平台字幕）。
     专治「没有人声、文字全在画面上」的视频：brief 报「几乎无人声」之后就该用它。
     只下这一段的最低画质视频，按 n 个时间点取帧识别，结果**带时间码**、可直接引用。
-    代价：约 1 帧 0.3-0.8s（CPU）；n 越大越细，12 帧适合 5-6 分钟。"""
+    代价：约 1 帧 0.3-0.8s（CPU）；n 越大越细，12 帧适合 5-6 分钟。
+    引擎是可选依赖（≈80MB）：不传 install 时只告诉你装到哪、怎么换目录；
+    传 install=true 就地下载并先复述位置。"""
     ok, why = ocr.available()
+    preamble = ""
     if not ok:
-        return ("ERROR: 本地 OCR 没有装。装它只要一步：\n"
-                '  pip install "vidlens-mcp[ocr]"\n'
-                f"（当前环境导入失败: {why[:160]}）")
+        mode = ocr.auto_mode()
+        if install or mode == "auto":
+            where = ocr.install_target() or "（本解释器 site-packages）"
+            preamble = (f"OCR 引擎没装，开始下载 {ocr.OCR_PACKAGE}：约 "
+                        f"{ocr.OCR_DOWNLOAD_MB}MB，装到 {where}"
+                        f"（占盘约 {ocr.OCR_DISK_MB}MB）\n")
+            done, report = ocr.install(auto=(mode == "auto"))
+            preamble += f"[{'已就绪' if done else '失败'}] {report}\n\n"
+            if not done:
+                return preamble + ocr.notice()
+            ok = True
+        else:
+            return "ERROR: " + ocr.notice() + f"\n（当前导入失败: {why[:120]}）"
     try:
         n = max(1, min(MAX_OCR_FRAMES, int(n)))
         width = max(480, min(1920, int(width)))
@@ -1206,8 +1219,8 @@ def video_ocr(url: str, start: str | float = "0", end: str | float = "",
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
         if not made:
-            return ("ERROR: 这一段的画面取不到（站点可能不允许切片下载）。"
-                    "可以先用 `video_visual_scan` 看看能不能拿到图。")
+            return preamble + ("ERROR: 这一段的画面取不到（站点可能不允许切片下载）。"
+                               "可以先用 `video_visual_scan` 看看能不能拿到图。")
         res = ocr.ocr_frames([{"t": t, "path": p} for t, p in made])
         blocks = res["blocks"][:MAX_OCR_LINES]
         L = [f"# 画面识字 {core.hms(t0)} → {core.hms(t1)}（本地 OCR，离线）",
@@ -1235,11 +1248,11 @@ def video_ocr(url: str, start: str | float = "0", end: str | float = "",
             L.append("- 画面里没有识别到可用文字：这可能是纯画面/实拍/动画视频，"
                      "信息只能从构图、字幕条、场景判断；用 `video_visual_scan` 看 18 帧。")
         body = "\n".join(L)
-        return _fit([body], MAX_OCR_CHARS, tail=0) + _cost(body)
+        return preamble + _fit([body], MAX_OCR_CHARS, tail=0) + _cost(body)
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return preamble + f"ERROR: {e}"
     except Exception as e:
-        return _err(e)
+        return preamble + _err(e)
 
 
 @mcp.tool(structured_output=False)
