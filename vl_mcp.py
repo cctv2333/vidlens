@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -563,16 +564,27 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
 WATCH_FILE = "watch.json"
 
 
-def _watch_state(d: Path) -> dict:
+def _watch_path(d: Path, session: str = "") -> Path:
+    """Per-session cursor file.
+
+    The cursor used to be one file per video, so two conversations watching the
+    same URL advanced each other's position ("next" jumped minutes ahead). The tag
+    comes from the host (agent identity); without one we keep the shared file.
+    """
+    tag = re.sub(r"[^A-Za-z0-9_-]", "", str(session or ""))[:24]
+    return d / (f"watch-{tag}.json" if tag else WATCH_FILE)
+
+
+def _watch_state(d: Path, session: str = "") -> dict:
     try:
-        return json.loads((d / WATCH_FILE).read_text(encoding="utf-8"))
+        return json.loads(_watch_path(d, session).read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
-def _watch_write(d: Path, st: dict) -> None:
-    (d / WATCH_FILE).write_text(json.dumps(st, ensure_ascii=False, indent=1),
-                                encoding="utf-8")
+def _watch_write(d: Path, session: str, st: dict) -> None:
+    _watch_path(d, session).write_text(json.dumps(st, ensure_ascii=False, indent=1),
+                                       encoding="utf-8")
 
 
 def _fit(lines: list, limit: int, tail: int = 2) -> str:
@@ -608,7 +620,7 @@ def _evenly(rows: list, want: int) -> list:
 
 @mcp.tool(structured_output=False)
 def video_watch(url: str, minutes: float = 5, cursor: str = "next",
-                lang: str = "zh", model: str = "small") -> str:
+                lang: str = "zh", model: str = "small", session: str = "") -> str:
     """分段看片：一次只前进一段（默认 5 分钟，约 1k 字），看完就停，等调用方决定。
 
     这就是「一段一段看、看一点说一点」的入口：
@@ -625,9 +637,9 @@ def video_watch(url: str, minutes: float = 5, cursor: str = "next",
             dur = float(meta.get("duration") or 0)
             span = max(0.5, float(minutes or 5)) * 60.0
             if cur in ("stop", "clear", "reset-to-zero"):
-                _watch_write(d, {})
+                _watch_write(d, session, {})
                 return "已清掉分段进度。下次 video_watch 从 0 开始。"
-            st = {} if cur in ("restart", "reset", "from-start") else _watch_state(d)
+            st = {} if cur in ("restart", "reset", "from-start") else _watch_state(d, session)
             at = 0.0 if cur in ("restart", "reset", "from-start") else float(st.get("at") or 0.0)
             if dur and at >= dur - 0.5:
                 return (f"已经看到结尾（{core.hms(dur)}），没有下一段了。"
@@ -635,7 +647,7 @@ def video_watch(url: str, minutes: float = 5, cursor: str = "next",
             t0 = at
             t1 = min(dur, at + span) if dur else at + span
             rows, gaps, source = _rows_for_window(url, d, meta, t0, t1, lang, model)
-            _watch_write(d, {"at": t1})
+            _watch_write(d, session, {"at": t1})
         # Start-time filter: a row that merely overlaps the boundary would print a
         # timestamp before the segment start ("04:58" in the 05:00–10:00 segment).
         sel = [r for r in rows

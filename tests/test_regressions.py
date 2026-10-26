@@ -229,6 +229,21 @@ class OutputBudgetTests(unittest.TestCase):
         self.assertGreaterEqual(M.MAX_WINDOW_LINES, 20)
         self.assertLessEqual(M.MAX_WINDOW_LINES, 200)
 
+    def test_watch_cursor_is_per_session(self):
+        # One cursor per video meant two conversations watching the same URL
+        # advanced each other's position.
+        d = Path("out") / "BV1"
+        s1, s2, shared = M._watch_path(d, "s1"), M._watch_path(d, "s2"), M._watch_path(d, "")
+        self.assertNotEqual(s1, s2)
+        self.assertEqual(s1.parent, d)
+        self.assertEqual(shared.name, M.WATCH_FILE)
+        self.assertTrue(s1.name.startswith("watch-s1"))
+
+    def test_watch_path_rejects_path_tricks(self):
+        p = M._watch_path(Path("out") / "BV1", "../../etc/passwd")
+        self.assertEqual(p.parent, Path("out") / "BV1")
+        self.assertNotIn("..", p.name)
+
     def test_clipping_never_drops_the_how_to_continue_line(self):
         # A blind [:limit] slice could cut the line that says what to call next,
         # leaving a truncated reply with no way forward.
