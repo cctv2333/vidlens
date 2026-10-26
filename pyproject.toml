@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "vidlens-mcp"
-version = "1.4.1"
+version = "1.5.0"
 description = "Turn a public video into an evidence table an LLM can read: timecoded transcript, sampling sheets and AudioSet sound events, downloading only the bytes it needs."
 readme = "README.md"
 license = { text = "MIT" }
