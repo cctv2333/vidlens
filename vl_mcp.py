@@ -52,7 +52,7 @@ import vidlens_web as web
 
 mcp = MCPServer(
     "vidlens",
-    version="1.6.2",
+    version="1.6.3",
     instructions=(
         "按人类看片的习惯工作：先 video_meta（0 下载），再 video_plan（0 下载）看章节，"
         "挑 2-3 段用 video_window / video_sheet；平台字幕优先用 video_subs（0 下载），"
@@ -104,6 +104,7 @@ DEFAULT_CHAPTER_WINDOW = 300.0
 MAX_POLL_WAIT = 60.0
 LONG_VIDEO_SECONDS = 20 * 60
 MAX_SUB_LINES = 500
+MAX_SUB_CHARS = 6000
 FRAME_PAD_SECONDS = 2.0
 MAX_SHEET_COLS = 8
 MAX_SHEET_ROWS = 6
@@ -492,10 +493,21 @@ def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
         out = [f"# 平台字幕：{name}",
                f"- {len(rows)} 条，0 媒体下载", "",
                S.trust_block(threats, "字幕"), "", "## 字幕（带时间码）"]
-        out += [f"- `{core.hms(r['t0'])}` {S.clean(r['text'], 300)}" for r in rows[:limit]]
-        if len(rows) > limit:
-            out.append(f"- …另有 {len(rows) - limit} 条")
-        return "\n".join(out)
+        # A subtitle track is unbounded text: 200 lines x 300 chars is 60k chars in one
+        # reply, which is the one place a call could still blow a context window.
+        shown, chars = [], 0
+        for r in rows[:limit]:
+            line = f"- `{core.hms(r['t0'])}` {S.clean(r['text'], 300)}"
+            if shown and chars + len(line) > MAX_SUB_CHARS:
+                break
+            shown.append(line)
+            chars += len(line)
+        out += shown
+        rest = len(rows) - len(shown)
+        if rest > 0:
+            out.append(f"- …另有 {rest} 条（本次只回 ≤{MAX_SUB_CHARS} 字；"
+                       "缩 `limit`，或用 `video_seek(query)` 直接查原话）")
+        return "\n".join(out) + _cost("\n".join(out))
     except SystemExit as e:
         return f"ERROR: {e}"
     except Exception as e:

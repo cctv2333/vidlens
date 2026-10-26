@@ -130,6 +130,21 @@ class LocalFileTests(unittest.TestCase):
                 return await c.call_tool("video_subs", {"url": str(DEMO)})
         self.assertIn("本地文件", text_of(run(go)))
 
+    def test_subs_output_is_capped(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        sys.path.insert(0, str(ROOT))
+        import vl_mcp  # noqa: E402
+        d = Path(tempfile.mkdtemp(prefix="vl-subs-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        rows = [{"t0": float(i), "t1": float(i) + 1, "text": "字" * 300} for i in range(200)]
+        with mock.patch.object(vl_mcp, "_dir", lambda url: ({"duration": 300.0}, d)), \
+                mock.patch.object(vl_mcp.web, "download_subs", lambda *a, **k: (rows, "human.zh.vtt")):
+            out = vl_mcp.video_subs("https://example.com/x", limit=200)
+        self.assertLessEqual(len(out), vl_mcp.MAX_SUB_CHARS + 1200, len(out))
+        self.assertIn("另有", out)
+
     def test_drop_temp_never_deletes_the_source(self):
         import shutil
         import tempfile

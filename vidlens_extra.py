@@ -183,6 +183,18 @@ def doctor() -> list[dict]:
     except Exception as e:
         add("disk free", False, str(e))
 
+    # The cache grows by design (one directory per video, media deleted but
+    # sheets/transcripts kept) and nothing prunes it automatically. Report the
+    # number instead of letting the first surprise be a full disk.
+    try:
+        cs = cache_stats()
+        big = cs["mb"] > 2048
+        add("cache", not big,
+            f"{cs['mb']} MB / {cs['count']} 项 @ {cs['root']}"
+            + ("　偏大：`vl clean --days 7`（默认只删媒体，保留 brief.md）" if big else ""))
+    except Exception as e:
+        add("cache", False, str(e))
+
     try:
         req = urllib.request.Request("https://api.bilibili.com/x/web-interface/nav",
                                      headers={"User-Agent": UA})
