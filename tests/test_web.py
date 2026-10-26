@@ -114,6 +114,51 @@ class VttTests(unittest.TestCase):
         self.assertEqual(W.parse_vtt(""), [])
 
 
+class UrlShapeTests(unittest.TestCase):
+    """浏览器地址栏里的形式，和 yt-dlp 认的形式不是一回事。"""
+
+    def test_douyin_modal_id_becomes_a_video_url(self):
+        want = "https://www.douyin.com/video/7699546529224248586"
+        for s in ("https://www.douyin.com/jingxuan?modal_id=7699546529224248586",
+                  "https://www.douyin.com/discover?modal_id=7699546529224248586&x=1",
+                  "https://m.douyin.com/jingxuan?modal_id=7699546529224248586"):
+            self.assertEqual(W.normalize_url(s), want, s)
+
+    def test_other_urls_are_left_alone(self):
+        for s in ("https://www.douyin.com/video/7699546529224248586",
+                  "https://www.bilibili.com/video/BV1fbHg6UEiB/?spm_id_from=333.1007",
+                  "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                  "https://www.douyin.com/user/abc"):
+            self.assertEqual(W.normalize_url(s), s)
+
+    def test_run_yt_rewrites_the_target(self):
+        import subprocess
+
+        class P:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        seen = {}
+        orig_bin, orig_run = W._ytdlp_bin, subprocess.run
+        W._ytdlp_bin = lambda: ["echo"]
+        subprocess.run = lambda cmd, **k: (seen.setdefault("cmd", cmd), P())[1]
+        try:
+            W.run_yt(["-J", "https://www.douyin.com/jingxuan?modal_id=7699546529224248586"])
+        finally:
+            W._ytdlp_bin, subprocess.run = orig_bin, orig_run
+        self.assertIn("https://www.douyin.com/video/7699546529224248586", seen["cmd"])
+        self.assertNotIn("modal_id", " ".join(seen["cmd"]))
+
+    def test_extractor_hint_explains_dead_ends(self):
+        dead = W.extractor_hint("[iqiyi] Can't find any video; please report this issue")
+        self.assertIn("DRM", dead)
+        self.assertIn("VIDLENS_COOKIES_FROM_BROWSER", dead)
+        unsupported = W.extractor_hint("ERROR: Unsupported URL: https://x.y")
+        self.assertIn("douyin.com/video", unsupported)
+        self.assertEqual(W.extractor_hint("ERROR: HTTP Error 404"), "")
+
+
 class ArgTests(unittest.TestCase):
     def test_section_args_are_bounded(self):
         args = W.section_args(120.0, 140.0, 360, False)

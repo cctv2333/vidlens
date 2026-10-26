@@ -52,7 +52,7 @@ import vidlens_web as web
 
 mcp = MCPServer(
     "vidlens",
-    version="1.6.0",
+    version="1.6.1",
     instructions=(
         "按人类看片的习惯工作：先 video_meta（0 下载），再 video_plan（0 下载）看章节，"
         "挑 2-3 段用 video_window / video_sheet；平台字幕优先用 video_subs（0 下载），"

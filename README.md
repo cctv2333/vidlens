@@ -4,6 +4,8 @@
 [![PyPI](https://img.shields.io/pypi/v/vidlens-mcp.svg?cacheSeconds=600)](https://pypi.org/project/vidlens-mcp/)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**中文** · [English](README.en.md)
+
 把一个**公开可看**的视频，降解成「模型能真正读懂的证据表」。
 零云 API、零视觉模型、零显卡依赖。核心原则：**只下最小必要字节**。
 
@@ -47,12 +49,12 @@ vidlens doctor                        # CLI 自检
 install.cmd
 ```
 
-工程默认在 `D:\vidlens\vidlens`（可用环境变量覆盖）：
+工程在哪就用哪，下面三个位置都能用环境变量覆盖：
 - 产物：`VIDLENS_OUT`，默认工程内 `out/`（源码布局）；装成 wheel 后默认 `%LOCALAPPDATA%\vidlens\out`
-- 模型：`VIDLENS_MODEL_DIR`，默认 `D:\dev\models\whisper`（不存在则 `~/.cache/whisper`）
+- 模型：`VIDLENS_MODEL_ROOT`，默认 `%LOCALAPPDATA%\vidlens\models`（POSIX 走 XDG）；旧的 `D:\dev\models` **仅在它已存在时**沿用
 - ffmpeg 软链：`VIDLENS_BIN`，默认工程内 `bin/`（装成 wheel 后默认用户数据目录下的 `bin/`）
 
-**DSH 插件**（DeepSeek Harness 的原生 18 个工具）在另一个仓库：
+**DSH 插件**（DeepSeek Harness 的原生 21 个工具）在另一个仓库：
 <https://github.com/cctv2333/dsh-vidlens>
 
 
@@ -166,7 +168,7 @@ PP-OCRv6 模型随包分发、约 30MB，**装好即离线，运行时不下载�
 
 ```
 # 想放 D 盘、并且以后自动装：
-set VIDLENS_OCR_TARGET=D:\vidlens\ocr
+set VIDLENS_OCR_TARGET=D:\your\ocr
 set VIDLENS_OCR_AUTO_INSTALL=auto
 
 # 或者自己装一次（推荐给 CI/多环境）：
@@ -197,8 +199,8 @@ vidlens_doctor          # 会多一行 ocr: rapidocr 可用
 Chatbox / Claude / Cursor 里加 stdio server 的三项：
 
 ```
-command : D:\vidlens\vidlens\.venv\Scripts\python.exe
-args    : D:\vidlens\vidlens\vl_mcp.py
+command : <你的 python 路径>
+args    : <工程目录>\vl_mcp.py       # 或直接 vidlens-mcp
 env     : PYTHONIOENCODING=utf-8 ; HF_HUB_DISABLE_XET=1
 ```
 
@@ -265,9 +267,9 @@ vl models --recommend            # 按内存/CPU/磁盘给建议
 否则自动回退 faster-whisper。**不会重复下模型**。
 
 - 用户已有模型（FlashVoice 自带）：
-  `C:\Users\yu\AppData\Roaming\com.flashvoices\models\sense-voice-large.onnx`
+  `%APPDATA%\com.flashvoices\models\sense-voice-large.onnx`
   （937MB，等于官方 float32 `model.onnx`，元数据 `iic/SenseVoiceSmall`）
-- 词表：`D:\dev\models\sensevoice\tokens.txt`（308KB，一次下载，25,055 行）
+- 词表：`tokens.txt`（308KB，一次下载，25,055 行），放在模型根目录的 `sensevoice/` 下
 - 覆盖路径：
   ```
   VIDLENS_SENSEVOICE_MODEL=D:\path\sense-voice.onnx
@@ -374,7 +376,7 @@ out/<视频id>/
   `mcp.json`）。本次包解压后 94 项测试通过。
 - 许可证：**MIT**（见 `LICENSE`）；模型权重不随仓库/分发包分发。
 
-## 测试（104 项，默认不依赖网络）
+## 测试（209 项，默认不依赖网络）
 
 ```bash
 .venv\Scripts\python.exe -m unittest discover -s tests -v

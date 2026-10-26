@@ -203,6 +203,11 @@ def _ytdlp_bin():
 
 
 def run_yt(args, timeout=900):
+    # Single choke point: every URL that reaches yt-dlp goes through here, so the
+    # forms people actually copy (douyin `?modal_id=`) are normalized exactly once.
+    args = list(args)
+    if args:
+        args[-1] = normalize_url(args[-1])
     cmd = _ytdlp_bin() + POLITE + cookie_args() + args
     p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                        errors="replace", timeout=timeout)
@@ -214,6 +219,39 @@ def is_login_wall(err: str) -> bool:
     keys = ("login", "sign in", "signin", "premium", "members only", "需要登录",
             "大会员", "付费", "captcha", "verify you are human", "not available in your country")
     return any(k in low for k in keys)
+
+
+# ------------------------------------------------------------------ url shapes
+#
+# People paste what the browser shows them, not what yt-dlp documents. A Douyin
+# "精选" page carries the id in `modal_id`, which the extractor does not accept:
+# `douyin.com/jingxuan?modal_id=7699…` -> "Unsupported URL". Turning it into
+# `douyin.com/video/7699…` is the difference between "can't see it" and "needs cookies".
+
+DOUYIN_MODAL = re.compile(r"^https?://(?:www\.|m\.)?douyin\.com/(?!video/)[^#]*[?&]modal_id=(\d{6,})",
+                          re.I)
+
+
+def normalize_url(url: str) -> str:
+    """Rewrite the URL forms the sites hand out into the ones yt-dlp can read."""
+    u = (url or "").strip()
+    m = DOUYIN_MODAL.match(u)
+    if m:
+        return f"https://www.douyin.com/video/{m.group(1)}"
+    return u
+
+
+def extractor_hint(err: str) -> str:
+    """Actionable next step when the extractor itself gives up (not our bug, but ours to explain)."""
+    low = (err or "").lower()
+    if "can't find any video" in low or "no video formats found" in low:
+        return ("；这个站的解析器拿不到视频。常见原因：站点改版、要登录/VIP、DRM 加密。"
+                "可以先试 `VIDLENS_COOKIES_FROM_BROWSER=chrome`（用你自己的登录态）；"
+                "长视频平台（爱奇艺/腾讯/优酷）多数剧集只能拿到标题，别指望它出画面。")
+    if "unsupported url" in low:
+        return ("；这个链接形式 yt-dlp 不认。抖音请用 `https://www.douyin.com/video/<id>`"
+                "（本工具已能把 `?modal_id=<id>` 自动转成它）")
+    return ""
 
 
 # ------------------------------------------------------------------ metadata
@@ -363,12 +401,14 @@ def fetch_meta(url: str) -> tuple[dict, list[dict]]:
     local = local_path(url)
     if local:
         return _local_meta(local)
+    url = normalize_url(url)
     rc, out, err = run_yt(["-J", "--skip-download", url])
     if rc != 0 or not out.strip():
         if is_login_wall(err):
             raise SystemExit("STOP: this page needs a login / paid account. We do not bypass that."
-                             + cookie_hint(err))
-        raise SystemExit(f"meta failed rc={rc}: {err.strip()[:220]}{cookie_hint(err)}")
+                             + cookie_hint(err) + extractor_hint(err))
+        raise SystemExit(f"meta failed rc={rc}: {err.strip()[:220]}"
+                         + cookie_hint(err) + extractor_hint(err))
     raw = json.loads(out[out.find("{"):])
     bad = check_meta(raw)
     if bad:
