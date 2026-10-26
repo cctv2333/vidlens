@@ -32,7 +32,11 @@ sensevoice = ["sherpa-onnx>=2.0.0,<3"]
 whisper = ["faster-whisper>=1.0.3", "av>=11,<19"]
 # AudioSet sound events (chewing / knock / water) also use sherpa-onnx.
 audioevents = ["sherpa-onnx>=2.0.0,<3"]
-all = ["sherpa-onnx>=2.0.0,<3", "faster-whisper>=1.0.3", "av>=11,<19"]
+# Screen-text OCR for videos with no speech (B-063). RapidOCR ships the PP-OCRv6
+# models inside the wheel, so this stays offline and downloads nothing at runtime.
+# Apache-2.0; attribution in NOTICE.md.
+ocr = ["rapidocr>=3.0,<4"]
+all = ["sherpa-onnx>=2.0.0,<3", "faster-whisper>=1.0.3", "av>=11,<19", "rapidocr>=3.0,<4"]
 
 [project.scripts]
 vidlens = "vidlens:main"
@@ -57,6 +61,7 @@ py-modules = [
   "vidlens_audioevents",
   "vidlens_extra",
   "vidlens_models",
+  "vidlens_ocr",
   "vidlens_sanitize",
   "vidlens_sensevoice",
   "vidlens_web",

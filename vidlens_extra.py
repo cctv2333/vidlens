@@ -159,6 +159,18 @@ def doctor() -> list[dict]:
         except Exception as e:
             add(f"dep:{mod}", False, str(e)[:80])
 
+    try:
+        import vidlens_ocr as ocr
+        ok, why = ocr.available()
+        # An optional extra that is absent is not a broken install: most videos have
+        # speech and never need OCR. Report the state, do not fail the check.
+        add("ocr (optional, screen text)", True,
+            "rapidocr 可用（PP-OCRv6 随包分发）" if ok
+            else f'未装（可选，静音视频才需要）—— pip install "vidlens-mcp[ocr]"'
+                 f'（{why[:50]}）')
+    except Exception as e:      # a broken optional module must not hide the rest
+        add("ocr (optional, screen text)", False, str(e)[:80])
+
     md = Path(core.model_dir())
     model_files = list(md.rglob("model.bin")) if md.exists() else []
     add("whisper model", bool(model_files),

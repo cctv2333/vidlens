@@ -20,7 +20,8 @@ SRV = str(ROOT / "vl_mcp.py")
 EXPECTED = {"video_meta", "video_plan", "video_subs", "video_brief", "video_window",
             "video_watch", "video_audio", "video_soundscape", "video_sheet",
             "video_frames", "video_full", "video_job_start", "video_job",
-            "video_visual_scan", "video_comments", "vidlens_models", "vidlens_doctor"}
+            "video_visual_scan", "video_ocr", "video_comments", "vidlens_models",
+            "vidlens_doctor"}
 
 
 def text_of(result) -> str:

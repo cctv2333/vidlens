@@ -721,9 +721,9 @@ def build_brief(meta: dict, rows: list[dict], gaps: list[dict], cuts: list[float
     speech_s = sum(max(0.0, r["t1"] - r["t0"]) for r in live_rows)
     has_speech = bool(live_rows)
     if rows and not has_speech:
-        L.append(f"- **未识别到语音**（{len(rows)} 个窗口只有填充词/背景音乐）：内容在画面里 —— "
-                 "用 `video_visual_scan` 抽样看帧，或用 `video_sheet` 看具体区间。"
-                 "不要因为这里没有台词就以为视频没内容。")
+        L.append(f"- **未识别到语音**（{len(rows)} 个窗口只有填充词/背景音乐）：内容在画面里。"
+                 "先试 `video_ocr(url, n=12)`（本地 OCR，直接把画面文字读成带时间码的文本）；"
+                 "画面没字再用 `video_visual_scan`。不要因为这里没有台词就以为视频没内容。")
     elif dur and speech_s < dur * 0.15:
         L.append(f"- **语音覆盖率仅 {speech_s/dur*100:.0f}%**（{c.hms(speech_s)} / {c.hms(dur)}）："
                  "大量段落无词，信息可能在画面（字幕、演示、动画），建议 `video_visual_scan`。")

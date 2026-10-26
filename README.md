@@ -135,6 +135,24 @@ Windows 用 `vl.cmd`，其余平台用 `.venv/bin/python vidlens.py`。
 | `video_visual_scan(url, n=24)` | 最低画质视频（7min≈14MB） | 全片抽样 n 帧（按切点优先），烧上时间码拼图 |
 | `video_sheet(url, start, end, cols, rows)` | 该段（20s≈0.9MB） | 指定区间拼图 |
 | `video_frames(url, at=[...])` | 该段 | 最多 6 张精确帧 |
+| `video_ocr(url, start, end, n=12)` | 该段最低画质 | **把画面上的字读成文本**（本地 OCR，离线），带时间码；无人声/无字幕视频的主力 |
+
+**无声视频（字幕型）怎么处理**
+
+中文知识区有大量视频**没有人声、也没有平台字幕，文字全烧在画面上**。`video_brief` 会先告诉你
+「几乎无人声（有效台词 0 字）」，接着用 `video_ocr`，它把 n 帧里的文字识别出来、合并同一句跨帧的重复、
+剔除水印与图表标签，输出可直接引用的带时间码文本（12 帧约 1.3k tokens，比逐帧看图省一个数量级）。
+
+OCR 是可选依赖，引擎是 [RapidOCR](https://github.com/RapidAI/RapidOCR)（Apache-2.0），
+PP-OCRv6 模型随包分发、约 30MB，**装好即离线，运行时不下载任何东西**：
+
+```
+pip install "vidlens-mcp[ocr]"
+vidlens_doctor          # 会多一行 ocr: rapidocr 可用
+```
+
+署名与许可证见 [NOTICE.md](NOTICE.md)；与 [Umi-OCR](https://github.com/hiroi-sora/Umi-OCR)（MIT）
+的关系只是"借了离线+可换引擎的做法"，没有复制它的代码。
 
 **听声音事件（台词之外）**
 

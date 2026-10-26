@@ -45,6 +45,7 @@ import vidlens_audio as audio_mod
 import vidlens_audioevents as ae
 import vidlens_extra as extra
 import vidlens_models as models_mod
+import vidlens_ocr as ocr
 import vidlens_sanitize as S
 import vidlens_sensevoice as sv
 import vidlens_web as web
@@ -83,6 +84,14 @@ MAX_DIGEST_LINES = 5
 MAX_WINDOW_LINES = 80
 MAX_SEGMENT_LINES = 8
 MAX_SEGMENT_CHARS = 1200
+# Screen text: a 6-minute slide video needs ~12 frames to cover its captions, and
+# 60 blocks is already a full page of text. Both caps exist so one call cannot
+# become the whole context window.
+MAX_OCR_FRAMES = 24
+MAX_OCR_LINES = 60
+MAX_OCR_TEXT = 2400
+MAX_OCR_CHARS = 3200
+OCR_SCAN_HEIGHT = 720      # 480p mangles small captions; 720p is the sweet spot
 MAX_AUDIO_MB = 200.0
 CUT_THRESHOLD = 0.25
 SCAN_HEIGHT = 360
@@ -541,8 +550,9 @@ def _digest(meta: dict, rows: list, dur: float, chapters: list, threats: list,
              "外部事实核实不在本工具范围内")
     if rows and not live:
         L.append(f"**⚠ 几乎无人声**（{len(rows)} 个窗口只有填充词/音乐，有效台词 0 字）："
-                 "内容在画面里。用 `video_visual_scan(url, n=18)` 鸟瞰全片，"
-                 "再用 `video_sheet` 看关键区间；不要根据音频下结论。")
+                 "内容在画面里。先试 `video_ocr(url, n=12)` —— 它把画面上的字直接读成"
+                 "带时间码的文本（本地 OCR，离线），比逐帧看图省得多；"
+                 "画面没字再用 `video_visual_scan(url, n=18)`。不要根据音频下结论。")
     elif live and dur:
         speech = sum(max(0.0, r["t1"] - r["t0"]) for r in live)
         cover = speech / dur * 100
@@ -1150,6 +1160,86 @@ def video_job(job_id: str, wait_seconds: float = 0) -> str:
     """查询后台任务。wait_seconds 建议 20-30（不要超过 60，否则客户端会超时）。
     完成时返回完整报告；运行中返回 stage + 百分比。"""
     return extra.job_status(job_id, wait_seconds)
+
+
+@mcp.tool(structured_output=False)
+def video_ocr(url: str, start: str | float = "0", end: str | float = "",
+              n: int = 12, width: int = 1280) -> str:
+    """把画面上的字**读出来**（本地 OCR，离线；不靠人声、不需要平台字幕）。
+    专治「没有人声、文字全在画面上」的视频：brief 报「几乎无人声」之后就该用它。
+    只下这一段的最低画质视频，按 n 个时间点取帧识别，结果**带时间码**、可直接引用。
+    代价：约 1 帧 0.3-0.8s（CPU）；n 越大越细，12 帧适合 5-6 分钟。"""
+    ok, why = ocr.available()
+    if not ok:
+        return ("ERROR: 本地 OCR 没有装。装它只要一步：\n"
+                '  pip install "vidlens-mcp[ocr]"\n'
+                f"（当前环境导入失败: {why[:160]}）")
+    try:
+        n = max(1, min(MAX_OCR_FRAMES, int(n)))
+        width = max(480, min(1920, int(width)))
+        with _LOCK:
+            t0, t1 = core.parse_t(_t(start)), core.parse_t(_t(end or "999999"))
+            meta, d = _dir(url)
+            dur = float(meta.get("duration") or 0)
+            t0, t1 = _clamp_range(meta, t0, t1)
+            times = ocr.timestamps(dur, n, t0, t1)
+            outd = d / f"ocr_{int(t0)}_{int(t1)}"
+            outd.mkdir(parents=True, exist_ok=True)
+            for old in outd.glob("t*ms.jpg"):
+                old.unlink(missing_ok=True)
+            made: list[tuple[float, str]] = []
+            tmp = Path(tempfile.mkdtemp(dir=str(d), prefix="ocrsec_"))
+            try:
+                with _MEDIA_LOCK:
+                    try:
+                        sec = web.download_section(url, tmp, t0, t1,
+                                                   OCR_SCAN_HEIGHT, False)
+                    except SystemExit:
+                        sec = web.download_video_lowest(url, d, OCR_SCAN_HEIGHT)
+                    for t in times:
+                        try:
+                            made += core.grab_at(str(sec), [t - t0], outd, width, 3)
+                        except Exception:      # one bad frame must not kill the batch
+                            continue
+                    if sec.parent == tmp:
+                        sec.unlink(missing_ok=True)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        if not made:
+            return ("ERROR: 这一段的画面取不到（站点可能不允许切片下载）。"
+                    "可以先用 `video_visual_scan` 看看能不能拿到图。")
+        res = ocr.ocr_frames([{"t": t, "path": p} for t, p in made])
+        blocks = res["blocks"][:MAX_OCR_LINES]
+        L = [f"# 画面识字 {core.hms(t0)} → {core.hms(t1)}（本地 OCR，离线）",
+             f"- 引擎 {ocr.engine_name()}（PP-OCRv6 随包分发）· {len(made)} 帧 · "
+             f"识别 {res['recognized']} 段 → 合并 {len(res['blocks'])} 条字幕 · "
+             f"丢弃 {res['dropped']} 段（其中静态叠加层 {res['overlay']} 种：水印/logo/固定 UI）"]
+        if blocks:
+            L.append("")
+            L.append("## 字幕（同一句跨帧只留一条，时间码是本条首次出现的位置）")
+            for b in blocks:
+                L.append(f"- `{core.hms(b['t0'])}` {S.clean(b['text'], 200)}")
+            if len(res["blocks"]) > len(blocks):
+                L.append(f"- …另有 {len(res['blocks']) - len(blocks)} 条（把 n 调小或缩小时间窗）")
+        if res["diagram"]:
+            L.append("")
+            L.append(f"## 图表/界面文字（{len(res['diagram'])} 帧字多且非中文句，不是旁白）")
+            for dg in res["diagram"][:6]:
+                L.append(f"- `{core.hms(dg['t'])}` {S.clean(dg['text'], 240)}")
+        if blocks:
+            L.append("")
+            L.append("## 全文（按时间拼接，可直接引用）")
+            L.append(S.clean(" ".join(b["text"] for b in blocks), MAX_OCR_TEXT))
+        elif not res["diagram"]:
+            L.append("")
+            L.append("- 画面里没有识别到可用文字：这可能是纯画面/实拍/动画视频，"
+                     "信息只能从构图、字幕条、场景判断；用 `video_visual_scan` 看 18 帧。")
+        body = "\n".join(L)
+        return _fit([body], MAX_OCR_CHARS, tail=0) + _cost(body)
+    except SystemExit as e:
+        return f"ERROR: {e}"
+    except Exception as e:
+        return _err(e)
 
 
 @mcp.tool(structured_output=False)

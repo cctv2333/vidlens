@@ -6,6 +6,7 @@
 
 | # | 日期 | 标题 | 状态 | 归档 |
 |---|---|---|---|---|
+| V-012 | 2026-10-26 | 内置本地 OCR（RapidOCR）：`video_ocr` + 水印/图表帧判定 + 许可证登记 | 已完成 | — |
 | V-011 | 2026-10-26 | 外部 AI 实测反馈修复：无人声误判 / 摘要取样偏差 / 大图 base64 / 成本自述 / 口径时间戳 | 已完成 | — |
 | V-010 | 2026-10-26 | awesome-dsh-plugin 收录 PR #9422 转绿（age 门槛 / 手动触发路径 / README 自动生成） | 已完成 | — |
 | V-009 | 2026-10-26 | 上下文预算治理：digest 默认 / 分段 watch / 预算台账 / 调用去重 / schema 瘦身 | 已完成 | — |
@@ -17,6 +18,44 @@
 | V-003 | 2026-10-25 | 硬编码/魔法数字审计与字幕/抽样能力验收 | 已完成 | — |
 | V-002 | 2026-10-25 | 审计 P1/P2 修复：字幕优先、cookie、锁、注入扫描、缓存与边界 | 已完成 | — |
 | V-001 | 2026-10-25 | plan() / pauses.json 双形态崩溃修复 | 已完成 | — |
+
+---
+
+## 2026-10-26 内置本地 OCR（V-012）
+
+- **目标**：三个测试视频里有 **2 个没有人声**（BV14Rnm6YEch 全程画面字幕、BV165Jv6EEbh 连字都没有），
+  当时唯一的办法是下整片最低画质、让模型逐帧看图猜字。要把「画面上的字」变成可引用的文本。
+- **事实（先查许可证再动手）**：
+  - [Umi-OCR](https://github.com/hiroi-sora/Umi-OCR)：**MIT**，48k stars，Qt 桌面程序 + 可换引擎。
+    价值在「离线 + 多引擎 + 批量」的做法，不在代码；整包 100MB+，不适合当 pip 依赖。
+  - [RapidOCR](https://github.com/RapidAI/RapidOCR)：**Apache-2.0**，8.3k stars，纯 Python + ONNX Runtime；
+    wheel 27.3MB，**PP-OCRv6 det/rec/cls 模型随包分发**（9.5+20.3+0.6MB），装完即离线、运行时不下载。
+    依赖 pyclipper / opencv-python-headless / shapely / omegaconf，都是宽松许可证。
+    模型权重版权归百度 / PaddleOCR 权利方，Apache-2.0，出处记在上游 `MODEL_LICENSES.md`。
+  - 生态里同类做法有先例：`AB498/computer-control-mcp`（MIT）就是 RapidOCR + onnxruntime。
+  - 本机 `onnxruntime 1.31.0` 已存在（sherpa-onnx 带），所以实际只新增 ~30MB 的引擎与模型。
+- **改动**：
+  - 新增 `vidlens_ocr.py`（约 170 行，懒加载）：`available()` / `ocr_image()` / `ocr_frames()` /
+    `merge_captions()` / `overlay_texts()` / `looks_like_diagram()` / `timestamps()`。
+  - 新增工具 `video_ocr(url, start, end, n=12, width=1280)`（MCP 第 18 个、插件第 21 个）：
+    只下这段最低画质（720p 起步，480p 会把小字糊掉），n 帧识别，输出带时间码的字幕 + 全文。
+  - 三条清洗规则，都是实测撞出来的：
+    ① **静态叠加层**：同一短串出现在 ≥40% 帧 → 判为水印/固定 UI（实测「折光AI1996 bilibili」重复 8 次）；
+    ② **图表帧**：一帧 ≥6 个文字框且中文字符占比 <45% → 归到「图表/界面文字」，不并入字幕
+       （实测 Transformer 结构图吐出 Softmax/Add & Norm 等 15 个标签），但其中中文句子仍会捞回字幕；
+    ③ **平台名**：短行里出现 bilibili/抖音/快手… 即水印；长句提到不算。
+  - 接入提示：`_digest` 与 `brief.md` 在「几乎无人声」处先指向 `video_ocr`，再指向 `video_visual_scan`。
+  - `vidlens_doctor` 多一行 `ocr (optional, screen text)`；**未装不算失败**（多数视频有人声，用不到）。
+- **验证**：
+  - `Ran 170 tests ... OK (skipped=1)`（新增 `tests/test_ocr.py` 20 项：懒加载、水印/叠加层、合并、
+    图表帧、时间点、许可证登记）。
+  - 真机：`video_ocr(BV14Rnm6YEch, n=12)` → 46.6s（下载+识别）、≈1.3k tokens、16 条字幕，
+    内容与人工看拼图的读数一致（「全世界有195个主权国家 / 剩下的193个都在干嘛 / 瑞士的模型叫 Apertus /
+    15个国家共同推出了 Latam-GPT」）。清洗后 51 段 → 16 条，水印 0 条。
+  - 插件自检 127/127（新增工具被发现）。
+- **许可证**：`NOTICE.md` 新增 RapidOCR / PP-OCRv6 / ONNX Runtime / OpenCV 四行，并在「设计借鉴」
+  里写明与 Umi-OCR 的关系（只借做法，未复制代码）；`pyproject` 增 `ocr` extra。
+- **状态**：已完成。
 
 ---
 

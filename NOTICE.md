@@ -15,6 +15,10 @@
 | [SenseVoice tokens.txt](https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17) | 随 sherpa-onnx 模型包 | 25,055 行词表 | 308KB，未修改，存放于 `D:\dev\models\sensevoice` |
 | [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) | BSD-2-Clause | 提供 ffmpeg 可执行文件 | 该包内附带的 ffmpeg 构建受 **LGPL/GPL** 约束；仅作为独立进程调用，不链接进本程序 |
 | [Whisper 模型权重](https://huggingface.co/Systran/faster-whisper-small) | MIT（OpenAI Whisper） | 语音模型 | 下载至 `D:\dev\models\whisper` |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Apache-2.0 | 画面文字识别（`vidlens_ocr.py`，可选依赖） | 作为 pip 包使用，未修改其代码；仅在 `pip install "vidlens-mcp[ocr]"` 后启用 |
+| PP-OCRv6 det/rec/cls 模型 | Apache-2.0（模型权重版权归百度 / PaddleOCR 权利方） | RapidOCR 的识别模型 | **随 rapidocr wheel 分发**（约 30MB），本仓库不再分发、运行时不下载；上游 [MODEL_LICENSES.md](https://github.com/RapidAI/RapidOCR) 记录了出处 |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | RapidOCR 的推理后端 | 间接依赖（本机亦被 sherpa-onnx 使用） |
+| [OpenCV](https://github.com/opencv/opencv)（headless） | Apache-2.0 | RapidOCR 的图像前处理 | 间接依赖 |
 | Python 标准库 | PSF | 其余全部 | — |
 
 **关于 ffmpeg 的许可证**：本程序以子进程方式调用 ffmpeg，不与之链接，因此本程序自身的许可证不受其 GPL 传染。
@@ -28,6 +32,7 @@
 | [coah80/youtube-mcp](https://github.com/coah80/youtube-mcp) | MIT | ①帧与台词按时间交织的表征；②控制喂给模型的帧数以控制 token |
 | [JazerJu/video-miner](https://github.com/JazerJu/video-miner) | **无许可证**（保留所有权利） | 仅借鉴其 MCP 工具契约的划分方式；**未使用其任何代码，也不再依赖其行为** |
 | [Breakthrough/PySceneDetect](https://github.com/Breakthrough/PySceneDetect) | BSD-3-Clause | 场景切分的思想（本实现改用 ffmpeg `scene` 分数，未引入其库） |
+| [hiroi-sora/Umi-OCR](https://github.com/hiroi-sora/Umi-OCR) | MIT | 「离线、多引擎可换、批量」这套 OCR 做法（引擎的抽象方式、批量识别的使用姿势）。**未复制其任何代码**——它是 Qt 桌面程序，本仓库只有 100 行的 Python 适配层，引擎直接依赖 RapidOCR |
 
 > 说明：`video-miner` 仓库未提供开源许可证，因此**不能复制其代码**，只能阅读其公开文档并借鉴思路。
 > 这一点在评估时已明确记录。
