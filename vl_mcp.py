@@ -79,6 +79,8 @@ MAX_DIGEST_CHARS = 1600
 MAX_DIGEST_CHAPTERS = 8
 MAX_DIGEST_LINES = 5
 MAX_WINDOW_LINES = 80
+MAX_SEGMENT_LINES = 8
+MAX_SEGMENT_CHARS = 1200
 MAX_AUDIO_MB = 200.0
 CUT_THRESHOLD = 0.25
 SCAN_HEIGHT = 360
@@ -264,7 +266,7 @@ def _skim_notice(url: str, meta: dict) -> str:
 
 # --------------------------------------------------------------------- tools
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_meta(url: str) -> str:
     """读取公开视频的元数据（标题、UP主、时长、发布日期、播放/点赞、是否有字幕）。
     不下载任何媒体，几乎零成本。用于判断"这个视频值不值得看"。"""
@@ -298,7 +300,7 @@ def video_meta(url: str) -> str:
         return _err(e)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_plan(url: str, window: float = DEFAULT_CHAPTER_WINDOW) -> str:
     """0 下载：按切点/长静音把视频切成章节，给出建议观看顺序。
     长视频默认先调它，再挑 2-3 个章节用 video_window / video_sheet，不要一上来就转写全片。"""
@@ -329,7 +331,7 @@ def video_plan(url: str, window: float = DEFAULT_CHAPTER_WINDOW) -> str:
         return _err(e)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
     """只读平台字幕轨（人工字幕优先，其次自动字幕），0 媒体下载。
     方言/口音重、ASR 不确定时，先看这里有没有原字幕；没有再用 ASR 或看画面硬字幕。"""
@@ -363,7 +365,7 @@ def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
         return _err(e)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_brief(url: str, lang: str = "zh", model: str = "small",
                 scan_cuts: bool = False, refresh: bool = False,
                 full: bool = False, prompt: str = "", level: str = "digest") -> str:
@@ -523,7 +525,7 @@ def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
     return rows, gaps, source
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_window(url: str, start: str | float = "0", end: str | float = "60", lang: str = "zh",
                  model: str = "small", prompt: str = "") -> str:
     """只看某个时间窗：该窗内的台词（带时间码）与停顿。
@@ -558,7 +560,101 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
         return _err(e)
 
 
-@mcp.tool()
+WATCH_FILE = "watch.json"
+
+
+def _watch_state(d: Path) -> dict:
+    try:
+        return json.loads((d / WATCH_FILE).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _watch_write(d: Path, st: dict) -> None:
+    (d / WATCH_FILE).write_text(json.dumps(st, ensure_ascii=False, indent=1),
+                                encoding="utf-8")
+
+
+def _evenly(rows: list, want: int) -> list:
+    """Evenly spaced pick; keeps the shape of a segment without dumping all of it."""
+    if want <= 0 or len(rows) <= want:
+        return list(rows)
+    step = len(rows) / float(want)
+    return [rows[min(len(rows) - 1, int(i * step))] for i in range(want)]
+
+
+@mcp.tool(structured_output=False)
+def video_watch(url: str, minutes: float = 5, cursor: str = "next",
+                lang: str = "zh", model: str = "small") -> str:
+    """分段看片：一次只前进一段（默认 5 分钟，约 1k 字），看完就停，等调用方决定。
+
+    这就是「一段一段看、看一点说一点」的入口：
+      - 第一次调用：从 0 开始，返回第 1 段的要点 + 进度；
+      - 继续看：再调一次（cursor="next" 接着上次的位置）；
+      - cursor="restart" 从头看，cursor="stop" 清掉进度。
+    返回里带「已看多少 / 共多少（百分比）」；看完会明说「看完了」。
+    要某段逐字再传 video_window；不要用 video_brief(level="full") 一次拉全文。
+    """
+    try:
+        cur = str(cursor or "next").strip().lower()
+        with _LOCK:
+            meta, d = _dir(url)
+            dur = float(meta.get("duration") or 0)
+            span = max(0.5, float(minutes or 5)) * 60.0
+            if cur in ("stop", "clear", "reset-to-zero"):
+                _watch_write(d, {})
+                return "已清掉分段进度。下次 video_watch 从 0 开始。"
+            st = {} if cur in ("restart", "reset", "from-start") else _watch_state(d)
+            at = 0.0 if cur in ("restart", "reset", "from-start") else float(st.get("at") or 0.0)
+            if dur and at >= dur - 0.5:
+                return (f"已经看到结尾（{core.hms(dur)}），没有下一段了。"
+                        '想重看传 cursor="restart"；要给总评直接回答用户即可，不必再跑工具。')
+            t0 = at
+            t1 = min(dur, at + span) if dur else at + span
+            rows, gaps, source = _rows_for_window(url, d, meta, t0, t1, lang, model)
+            _watch_write(d, {"at": t1})
+        # Start-time filter: a row that merely overlaps the boundary would print a
+        # timestamp before the segment start ("04:58" in the 05:00–10:00 segment).
+        sel = [r for r in rows
+               if t0 - 0.2 <= r["t0"] < t1 and (r.get("text") or "").strip()]
+        if not sel:
+            sel = [r for r in rows
+                   if r["t1"] >= t0 and r["t0"] <= t1 and (r.get("text") or "").strip()]
+        picked = _evenly(sel, MAX_SEGMENT_LINES)
+        total = max(1, int((dur + span - 1e-6) // span)) if dur else 1
+        idx = min(total, int(t0 // span) + 1)
+        pct = (t1 / dur * 100) if dur else 100.0
+        L = [f"# 第 {idx}/{total} 段 · {core.hms(t0)} → {core.hms(t1)}"
+             + (f"（整片 {core.hms(dur)}）" if dur else ""),
+             f"转写来源: {source}"]
+        if not sel:
+            L.append("- 这一段没有识别到语音（音乐/静音/无词段落）。"
+                     f"要看画面：video_sheet(start={core.hms(t0)!r}, end={core.hms(t1)!r})。")
+        else:
+            L.append("")
+            for r in picked:
+                L.append(f"- `{core.hms(r['t0'])}` {S.clean(r['text'], 150)}")
+            if len(sel) > len(picked):
+                L.append("")
+                L.append(f"- 本段共 {len(sel)} 行，这里抽了 {len(picked)} 行；要逐字："
+                         f"video_window(start={core.hms(t0)!r}, end={core.hms(t1)!r})（约 1.5k 字）")
+        L.append("")
+        if dur and t1 >= dur - 0.5:
+            L.append(f"进度: {core.hms(t1)} / {core.hms(dur)}（100%，看完了）")
+            L.append("下一步：给结论/总评；要回看某段再用 video_window。")
+        else:
+            L.append(f"进度: {core.hms(t1)} / {core.hms(dur or t1)}（{pct:.0f}%）")
+            L.append(f"下一步：先向用户汇报这一段（约 {core.hms(t0)}–{core.hms(t1)}）并问"
+                     "「继续看还是先讲这段」；用户说继续再调 "
+                     f"video_watch(url, minutes={float(minutes or 5):g})，不要一次拉完。")
+        return "\n".join(L)[:MAX_SEGMENT_CHARS]
+    except SystemExit as e:
+        return f"ERROR: {e}"
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(structured_output=False)
 def video_audio(url: str, start: str | float = "0", end: str | float = "20", lang: str = "zh") -> str:
     """听一段：本地 SenseVoice 的语种/情感/音频事件 + 节拍/能量（近似）。
     只下这一段音频（20 秒约 0.5MB），不转写全片。节拍估计对纯语音段意义有限，
@@ -648,7 +744,7 @@ def _format_soundscape(t0: float, t1: float, res: dict) -> str:
     return "\n".join(out)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_soundscape(url: str, start: str | float = "0", end: str | float = "60", top_k: int = 8,
                      min_prob: float = 0.15, window: float = 10.0,
                      hop: float = 5.0) -> str:
@@ -684,7 +780,7 @@ def video_soundscape(url: str, start: str | float = "0", end: str | float = "60"
         return _err(e)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_sheet(url: str, start: str | float = "0", end: str | float = "20",
                 cols: int = 4, rows: int = 3, height: int = 360) -> list:
     """只下载这一段（例如 20 秒 ≈ 0.9MB），返回一张拼图，每格左上角烧着绝对时间码。
@@ -740,7 +836,7 @@ def video_sheet(url: str, start: str | float = "0", end: str | float = "20",
         return [_err(e)]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_frames(url: str, at: list[float], width: int = 960) -> list:
     """按秒数精确取帧（最多 6 张），返回图片本身。只在需要读小字/看清细节时用。
     注意：取帧需要下载对应片段，成本高于 video_sheet。"""
@@ -792,7 +888,7 @@ def video_frames(url: str, at: list[float], width: int = 960) -> list:
         return [_err(e)]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_full(url: str, confirm: bool = False, max_mb: float = MAX_FULL_MB) -> str:
     """下载整片（仅在你明确要看全片时使用）。必须 confirm=True 才会执行。
     普通分析不需要它——先试 video_brief。"""
@@ -867,7 +963,7 @@ def _do_brief_locked(progress, url, lang, model, scan_cuts, comments, full, prom
     return _digest(meta, rows, dur, chapters, threats, source, brief, d)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_job_start(url: str, lang: str = 'zh', model: str = 'small',
                     scan_cuts: bool = False, comments: bool = False,
                     full: bool = False, prompt: str = '') -> str:
@@ -892,14 +988,14 @@ def video_job_start(url: str, lang: str = 'zh', model: str = 'small',
         return _err(e)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_job(job_id: str, wait_seconds: float = 0) -> str:
     """查询后台任务。wait_seconds 建议 20-30（不要超过 60，否则客户端会超时）。
     完成时返回完整报告；运行中返回 stage + 百分比。"""
     return extra.job_status(job_id, wait_seconds)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def video_visual_scan(url: str, n: int = 24, cols: int = 6, rows: int = 4) -> list:
     """抽样看画面：全片均匀取样（有切点时按切点取）n 帧，每帧烧上绝对时间码，拼成图返回。
     用于没有声音、或长时间无语音的视频。代价：下最低画质视频（7 分钟约 14-21MB），用完即删。"""
@@ -919,25 +1015,32 @@ def video_visual_scan(url: str, n: int = 24, cols: int = 6, rows: int = 4) -> li
         return [_err(e)]
 
 
-@mcp.tool()
-def video_comments(url: str, limit: int = 40) -> list:
+@mcp.tool(structured_output=False)
+def video_comments(url: str, limit: int = 40, with_images: bool = False) -> list:
     """抓公开视频的评论区（目前支持 B 站，免登录），给出互动比、负面/正面词频、
-    争议度启发式估计、高赞评论，并直接返回评论区里的图片（最多 4 张，已下载到本地）。
+    争议度启发式估计、高赞评论。默认**不**返回评论配图：一张截图走 MCP 是 base64
+    全量进上下文，很容易把窗口顶爆。确实要看图再传 with_images=true（最多 4 张）。
     评论是最敌对的文本来源，全部经过清洗与注入扫描后才展示。"""
     try:
         with _LOCK, _MEDIA_LOCK:      # comments download pictures into out/<id>/
             info = extra.bili_comments(url, limit=limit)
         imgs = []
-        for p in (info.get("pictures") or [])[:4]:
-            loc = p.get("local")
-            if loc and Path(loc).exists():
-                imgs.append(Image(path=loc))
-        return imgs + [extra.comments_block(info)]
+        pics = info.get("pictures") or []
+        if with_images:
+            for p in pics[:4]:
+                loc = p.get("local")
+                if loc and Path(loc).exists():
+                    imgs.append(Image(path=loc))
+        block = extra.comments_block(info)
+        if pics and not with_images:
+            block += (f"\n\n[评论配图 {len(pics)} 张，默认不返回（base64 很占上下文）；"
+                      "要看传 with_images=true]")
+        return imgs + [block]
     except Exception as e:
         return [_err(e)]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def vidlens_models(action: str = "list") -> str:
     """本地模型目录 + 硬件建议。只读，不自动下载；下载前必须先问用户。
     action=list 看目录；action=recommend 看这台机器适合哪个。"""
@@ -966,7 +1069,7 @@ def vidlens_models(action: str = "list") -> str:
         return _err(e)
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def vidlens_doctor() -> str:
     """自检：python / ffmpeg / yt-dlp / 依赖 / whisper 模型 / 磁盘 / 网络。哪里断了直接说。"""
     try:

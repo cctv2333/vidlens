@@ -124,6 +124,20 @@
 实测同一视频：digest 741 字 vs full 9,052 字（12×）。仍未做的：`meta`/`window` 结果里的
 「字符数/估算 token」提示，以及真正的会话级预算台账（需要拿到 session id，见 E-2）。
 
+### 5.3 分段推进（B-051，2026-10-26）
+
+真实会话里爆掉的不是「一次 brief 太大」，而是「一轮之内把全片拉完」，而且有三处放大：
+
+| 放大源 | 实测 | 处置 |
+|---|---|---|
+| `brief` 在客户端出现两次（`content[].text` + `structuredContent.result`） | ×2 | 16 个工具全部 `structured_output=False`，`list_tools` 里 `output_schema=None` |
+| `video_comments` 默认带 4 张 base64 截图 | 数万字符 | 默认 `with_images=False`，只报「有 N 张」 |
+| 没有「分段推进」原语，模型只能一次拉到底 | — | 新增 `video_watch`：一段一次（5 分钟 ≈ 0.5k 字），带进度与"先问用户" |
+
+`video_watch` 的状态机：`cursor=next`（默认，接着上次）/ `restart`（从头）/ `stop`（清进度），
+进度存 `out/<id>/watch.json`；返回里固定含「已看 X / 共 Y（%）」与下一步建议，
+最后一段会明说「看完了」。配合提示词里的「看一点、说一点、停下问」，模型就会在该停的地方停。
+
 ## 6. 明确不做（省得反复讨论）
 
 1. **默认下载整片**——要画面用 `sheet/frames/scan`。
