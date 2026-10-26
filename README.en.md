@@ -157,6 +157,12 @@ VIDLENS_COOKIES=/path/cookies.txt
 VIDLENS_COOKIES_FROM_BROWSER=chrome   # edge / firefox / chromium
 ```
 
+**The browser must be closed.** While it runs, its cookie database is locked and cannot be
+copied. And whether that browser has cookies for the site at all is a separate question: if you
+never signed in, there is nothing to read, and the tool will not invent it. With recent
+Chrome/Edge App-Bound encryption, an exported `cookies.txt` plus `VIDLENS_COOKIES` is the
+reliable route.
+
 **Inline image policy** (an MCP image block is base64 on the wire; one 340KB sheet ≈ 450k chars):
 
 ```

@@ -1,10 +1,10 @@
 # 工程交接入口
 
-## 当前状态（2026-10-26，V-017）
+## 当前状态（2026-10-26，V-018）
 
 新接手先看这六件事：
 
-1. **两个仓库**：`cctv2333/vidlens`（Python + MCP，PyPI `vidlens-mcp` **1.6.1**）、
+1. **两个仓库**：`cctv2333/vidlens`（Python + MCP，PyPI `vidlens-mcp` **1.6.2**）、
    `cctv2333/dsh-vidlens`（DSH 插件，npm `dsh-vidlens` **1.4.1**）。插件通过常驻桥
    `bridge/vidlens_bridge.py` 复用 `vl_mcp` 的函数，不存在第二份实现。
    **插件不含 Python 核心**：它 `import vidlens`，拿不到就回一句 pip 命令
@@ -26,7 +26,7 @@
 5. **路径规则统一，发布物里没有开发机路径**：`vidlens.models_root()` =
    env → legacy 目录（**仅当存在**）→ 用户数据目录。whisper / audio-tagging / SenseVoice
    三处共用；`NoPersonalPathsTests` 与插件自检各有一条护栏。见 B-065、V-013。
-6. **验证入口**：`python -m unittest discover -s tests`（**209 项**）、插件
+6. **验证入口**：`python -m unittest discover -s tests`（**210 项**）、插件
    `node tools/selftest.mjs`（**130 项**）、CI（ubuntu/windows × py3.10/3.12）、
    发布走 `v* tag + OIDC`（PyPI / npm 都不需要 token；注意 **pyproject 不能有 BOM**，B-064）。
 7. **最该继续做的**（按收益）：

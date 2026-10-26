@@ -217,6 +217,10 @@ VIDLENS_COOKIES=D:\path\cookies.txt
 VIDLENS_COOKIES_FROM_BROWSER=chrome   # edge / firefox / chromium
 ```
 
+**浏览器正在运行时读不到 cookie 库**（文件被锁），先完全退出浏览器（含托盘/后台进程）再试；
+至于"这个浏览器里到底有没有该站的 cookie"是另一回事——没登录过就是没有，工具不会替你凭空造一个。
+新版 Chrome/Edge 用 App-Bound 加密时，导出的 `cookies.txt` + `VIDLENS_COOKIES` 更稳。
+
 **图片内联策略**（MCP 的 image block 线上就是 base64，一张 340KB 拼图 ≈ 45 万字符）：
 
 ```

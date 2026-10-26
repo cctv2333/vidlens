@@ -74,12 +74,20 @@ def cookie_args() -> list[str]:
 
 
 def cookie_hint(err: str) -> str:
-    """Append an actionable hint when yt-dlp says cookies are required."""
+    """Append an actionable hint when yt-dlp cannot get (or cannot read) cookies."""
     low = (err or "").lower()
     if "fresh cookies" in low or "cookies are needed" in low or "cookies-from-browser" in low:
         return ("；此站需要 cookie（匿名或登录）。可设 "
                 "VIDLENS_COOKIES_FROM_BROWSER=chrome（或 edge/firefox），"
                 "或 VIDLENS_COOKIES=path\\cookies.txt 后重试")
+    if "could not copy" in low and "cookie" in low:
+        return ("；读不到浏览器的 cookie 库：**多半是浏览器正在运行**，锁住了那个文件。"
+                "先完全退出浏览器（含托盘/后台进程）再试；或者导出 cookies.txt 后设 "
+                "`VIDLENS_COOKIES=<路径>`（新版 Chrome/Edge 用 App-Bound 加密时，导出的文件更稳）")
+    if "could not find" in low and "cookies database" in low:
+        return ("；这台机器上没有该浏览器的 cookie 库（没装，或从没运行过）。"
+                "换一个浏览器名（chrome / edge / firefox / chromium），"
+                "或导出 cookies.txt 后设 `VIDLENS_COOKIES=<路径>`")
     return ""
 
 

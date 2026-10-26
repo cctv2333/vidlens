@@ -150,6 +150,17 @@ class UrlShapeTests(unittest.TestCase):
         self.assertIn("https://www.douyin.com/video/7699546529224248586", seen["cmd"])
         self.assertNotIn("modal_id", " ".join(seen["cmd"]))
 
+    def test_cookie_hints_are_actionable(self):
+        copy = W.cookie_hint("ERROR: Could not copy Chrome cookie database. See issue 7271")
+        self.assertIn("退出浏览器", copy)
+        self.assertIn("cookies.txt", copy)
+        missing = W.cookie_hint("ERROR: could not find chrome cookies database in \"C:\\none\"")
+        self.assertIn("没有该浏览器", missing)
+        self.assertIn("VIDLENS_COOKIES", missing)
+        need = W.cookie_hint("ERROR: Fresh cookies (not necessarily logged in) are needed")
+        self.assertIn("VIDLENS_COOKIES_FROM_BROWSER", need)
+        self.assertEqual(W.cookie_hint("ERROR: HTTP Error 404"), "")
+
     def test_extractor_hint_explains_dead_ends(self):
         dead = W.extractor_hint("[iqiyi] Can't find any video; please report this issue")
         self.assertIn("DRM", dead)
