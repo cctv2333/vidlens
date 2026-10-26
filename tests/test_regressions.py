@@ -25,6 +25,28 @@ import vidlens_web as W       # noqa: E402
 import vl_mcp as M            # noqa: E402
 
 
+class PackagingTests(unittest.TestCase):
+    """A BOM at byte 0 of pyproject.toml failed the 1.5.0 release before it started.
+
+    `Set-Content -Encoding UTF8` in Windows PowerShell 5.1 prepends EF BB BF; TOML
+    parsers reject it as "Invalid statement (at line 1, column 1)" and the whole
+    wheel build dies. Editing files from a shell should not be able to do this twice.
+    """
+
+    def test_pyproject_has_no_bom(self):
+        raw = (ROOT / "pyproject.toml").read_bytes()
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"),
+                         "pyproject.toml starts with a UTF-8 BOM; TOML cannot parse it")
+
+    def test_pyproject_declares_the_ocr_extra(self):
+        import tomllib
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        extras = data["project"]["optional-dependencies"]
+        self.assertIn("ocr", extras)
+        self.assertTrue(any("rapidocr" in item for item in extras["ocr"]))
+        self.assertIn("vidlens_ocr", data["tool"]["setuptools"]["py-modules"])
+
+
 class RangeTests(unittest.TestCase):
     """A reversed window used to produce `sheet_20000_5000.jpg` without a word."""
 
