@@ -6,6 +6,7 @@
 
 | # | 日期 | 标题 | 状态 | 归档 |
 |---|---|---|---|---|
+| V-009 | 2026-10-26 | 上下文预算治理：digest 默认 / 分段 watch / 预算台账 / 调用去重 / schema 瘦身 | 已完成 | — |
 | V-008 | 2026-10-25 | PyPI 打包 + 跨进程媒体锁 + 两仓库拆分（vidlens / dsh-vidlens） | 已完成 | — |
 | V-007 | 2026-10-25 | 声音事件接入（CED-mini + AudioSet 527）：video_soundscape + DSH 插件 | 已完成 | — |
 | V-006 | 2026-10-25 | 工程交接与可分发包（handover/ + dist zip） | 已完成 | — |
@@ -230,3 +231,23 @@ visual_scan 清理抽帧、命名常量。
 - **验证**：`Ran 69 tests ... OK (skipped=1)`；真实 MCP job（临时字典形态缓存）输出 `HAS_PLAN_SECTION: True`、`HAS_ERROR: False`；证据 `out/plan_bug_evidence.md`。
 - **状态**：已完成
 - **回退点**：`out/plan_bug_evidence.md` 记录了改动点；缓存已恢复原样。
+
+---
+
+## 2026-10-26 上下文预算与工具调用治理（V-009）
+
+- **目标**：解决「看一个视频就把模型上下文顶爆」。起因是一次真实会话：一轮内 4 个调用
+  （meta / brief / comments / sheet），brief 9k 字在客户端出现两次，评论还带 4 张 base64 图。
+- **改动**：
+  - `vl_mcp`：`video_brief(level="digest"|"full")` 默认 digest（≤1.6k 字）；`video_watch`
+    分段推进（每段 ≤1.2k 字、带进度、游标 per-session）；`video_window` 80 行上限；
+    `video_comments(with_images=False)`；16 个工具 `structured_output=False`（去掉重复）；
+    `_fit()` 截断保尾；`level` 校验提前到入口。
+  - 插件：per-Agent 预算台账（12k 提示 / 24k 硬钳：brief 强制 digest、watch ≤5 分钟、
+    评论禁图）；`vidlens_budget` 查询；相同参数调用去重 + 失败短路；提示词改为
+    「默认粗看一次答完，细看才分段」；schema 8,590 → 6,768 字符。
+  - 实测：单视频上下文从 ~14.2k 字符降到 ~5.8k；digest 741 字 vs full 9,052 字；
+    watch 每段 491–522 字。
+- **验证**：136 项测试、122 项插件自检、CI（ubuntu/windows × py3.10/3.12）全绿。
+- **待办**：schema 仍可再降（要删参数）；失败 memo 的 20 分钟窗口可能挡住网络恢复后的重试；
+  没有 dsh-ops 那种「证明上次正文确实在上下文里」的证据机制（见 HANDOVER）。
