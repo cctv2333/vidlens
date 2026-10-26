@@ -171,6 +171,16 @@ VIDLENS_COOKIES=D:\path\cookies.txt
 VIDLENS_COOKIES_FROM_BROWSER=chrome   # edge / firefox / chromium
 ```
 
+**图片内联策略**（MCP 的 image block 线上就是 base64，一张 340KB 拼图 ≈ 45 万字符）：
+
+```
+VIDLENS_INLINE_IMAGES=auto    # 默认：只内联 ≤200KB 的图，超出留在磁盘并给路径
+VIDLENS_INLINE_IMAGES=always  # 全贴图（能读文件的宿主没必要）
+VIDLENS_INLINE_IMAGES=never   # 只给路径，一张都不贴
+```
+
+每个较重的工具结果末尾都有一行 `[成本] 本次回上下文 ≈N tok`，方便在调用前决定值不值。
+
 ## 命令行新增命令
 
 ```bash

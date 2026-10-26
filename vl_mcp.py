@@ -33,6 +33,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import types
 from pathlib import Path
 
@@ -148,6 +149,94 @@ def _row_threats(rows: list[dict]) -> list[dict]:
     return out
 
 
+# An MCP image block is base64 on the wire, so a 340KB sheet becomes ~450k
+# characters of JSON in the transcript of hosts that do not decode it as an
+# image. The DSH bridge turns `Image` objects into file paths and pays nothing;
+# an unattended MCP client pays everything — so `auto` inlines only small
+# pictures and always leaves the path in the text block.
+MAX_INLINE_IMAGE_BYTES = 200 * 1024
+_CHARS_PER_TOKEN = 1.5      # rough for CJK; every use is labelled an estimate
+_PIVOT = re.compile(r"但是|然而|不过|所以|因此|总之|归根到底|我认为|结论|关键|"
+                    r"问题在于|反过来|一方面|另一方面")
+
+
+def _image_blocks(paths) -> tuple[list, str]:
+    """(inline images, note about the ones left on disk)."""
+    mode = (os.environ.get("VIDLENS_INLINE_IMAGES") or "auto").strip().lower()
+    keep, skipped = [], []
+    for p in paths:
+        p = Path(p)
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        if mode == "never" or (mode == "auto" and size > MAX_INLINE_IMAGE_BYTES):
+            skipped.append((p, size))
+        else:
+            keep.append(Image(path=str(p)))
+    note = ""
+    if skipped:
+        shown = ", ".join(f"{p.name} {s // 1024}KB" for p, s in skipped[:4])
+        note = (f"\n[未内联 {len(skipped)} 张（{shown}）：base64 会整段进上下文。图已落盘，"
+                "能读文件就直接打开路径；确实要贴图设 VIDLENS_INLINE_IMAGES=always]")
+    return keep, note
+
+
+def _cost(text: str, extra: str = "") -> str:
+    """A cost line, so the caller can decide before the window is spent.
+
+    Every result carries its own size; nothing here is a guess about the host's
+    tokenizer, hence "估算".
+    """
+    return (f"\n[成本] 本次回上下文 ≈{max(1, round(len(text) / _CHARS_PER_TOKEN)):,} tok"
+            f"（估算，约 {_CHARS_PER_TOKEN} 字/tok）{extra}")
+
+
+def _pick_lines(rows: list, dur: float, chapters: list,
+                n: int = MAX_DIGEST_LINES) -> list:
+    """The five lines most likely to show what the video argues.
+
+    Even sampling is how a digest misses the sentence that decides the whole
+    video: an argument closes at the end of a section, and uniform anchors walk
+    straight past it. Section tails first, then rows carrying a pivot word, then
+    even anchors to fill the rest.
+    """
+    live = [r for r in rows if core.speech_chars(r.get("text")) >= 2]
+    if not live:
+        return []
+    picked, seen = [], set()
+
+    def take(r) -> None:
+        key = round(float(r.get("t0") or 0.0), 1)
+        if key in seen or len(picked) >= n:
+            return
+        seen.add(key)
+        picked.append(r)
+
+    for ch in (chapters or [])[:2]:
+        pool = [r for r in live if ch["from"] <= r["t0"] <= ch["to"]]
+        if pool:
+            take(max(pool, key=lambda r: min(r["t1"], ch["to"])))
+    scored = sorted(live, key=lambda r: (-len(_PIVOT.findall(r.get("text") or "")),
+                                        -min(len(r.get("text") or ""), 120)))
+    for r in scored:
+        if len(picked) >= n:
+            break
+        if _PIVOT.search(r.get("text") or ""):
+            take(r)
+    for r in scored:
+        if len(picked) >= n:
+            break
+        take(r)
+    if dur:
+        for i in range(n):
+            if len(picked) >= n:
+                break
+            t = dur * (i + 0.5) / n
+            take(min(live, key=lambda r: abs(r["t0"] - t)))
+    return sorted(picked, key=lambda r: r["t0"])[:n]
+
+
 def _source_label(d: Path) -> str:
     p = d / "speech_info.json"
     if p.exists():
@@ -168,6 +257,10 @@ def _rows_with_media(url: str, d: Path, lang: str, model: str, refresh: bool,
     meta_p = d / "meta.json"
     if meta_p.exists():
         meta = json.loads(meta_p.read_text(encoding="utf-8"))["meta"]
+        # Play/like counts are a snapshot. Saying when it was taken stops the
+        # "meta says 75336, brief.md says 73595" confusion at its root.
+        meta["_fetched_at"] = time.strftime("%Y-%m-%d %H:%M",
+                                            time.localtime(meta_p.stat().st_mtime))
     else:
         meta, threats = web.fetch_meta(url)
         meta_p.write_text(json.dumps({"meta": meta, "threats": threats},
@@ -289,7 +382,9 @@ def video_meta(url: str) -> str:
         elif meta.get("music_hints"):
             lines.append("简介音乐线索: " + "; ".join(meta["music_hints"]))
         if meta.get("need_login_subtitle"):
-            lines.append("字幕状态: 需要登录才能取（need_login_subtitle=true）")
+            lines.append("字幕状态: 需要登录才能取（need_login_subtitle=true）"
+                         " —— 设 `VIDLENS_COOKIES_FROM_BROWSER=<浏览器名>` 后可直接拿平台字幕："
+                         "0 下载、比 ASR 准，值得先试一次再决定要不要跑 ASR")
         lines += [
             "",
             S.trust_block(threats, "标题/简介"),
@@ -418,7 +513,8 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
             extra += (f"\n[注意] 镜头切点扫描失败（{scan_error[:120]}），报告里没有 cuts；"
                       "台词与章节不受影响。")
         if want == "full":
-            return brief[:MAX_BRIEF_CHARS] + extra
+            body = brief[:MAX_BRIEF_CHARS]
+            return body + _cost(body, "（全文会一直留在上下文里；下次先要 digest）") + extra
         return _digest(meta, rows, dur, chapters, threats, source, brief, d) + extra
     except SystemExit as e:
         return f"ERROR: {e}"
@@ -428,20 +524,34 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
 
 def _digest(meta: dict, rows: list, dur: float, chapters: list, threats: list,
             source: str, brief: str, d: Path) -> str:
-    """Small, stable summary: shape, chapters, evenly sampled lines, where the rest is.
+    """Small, stable summary: shape, coverage, a few key lines, where the rest is.
 
-    Sampling instead of "pick the longest sentences": five evenly spread anchors
-    tell a reader what the video does, while the digest stays under ~1.5k chars.
+    Three things this has to say out loud, because a caller that does not read
+    the full report cannot infer them:
+      * which routes were actually taken (audio only — no frames, no comments);
+      * whether there was any speech at all (a musical video is not a silent bug);
+      * that five sampled lines are a table of contents, not evidence.
     """
     L = [f"# {meta.get('title') or meta.get('id') or 'video'}"]
     L.append(f"{meta.get('id')} · {core.hms(dur)} · {meta.get('extractor')} · "
              f"转写: {source or 'n/a'}")
-    speech = sum(max(0.0, r["t1"] - r["t0"]) for r in rows
-                 if (r.get("text") or "").strip())
-    if rows and dur:
+    live = [r for r in rows if core.speech_chars(r.get("text")) >= 2]
+    spoken_chars = sum(core.speech_chars(r.get("text")) for r in live)
+    L.append("覆盖: 音频 ✓ · 画面 ✗（要画面用 `video_visual_scan`） · 评论 ✗ · "
+             "外部事实核实不在本工具范围内")
+    if rows and not live:
+        L.append(f"**⚠ 几乎无人声**（{len(rows)} 个窗口只有填充词/音乐，有效台词 0 字）："
+                 "内容在画面里。用 `video_visual_scan(url, n=18)` 鸟瞰全片，"
+                 "再用 `video_sheet` 看关键区间；不要根据音频下结论。")
+    elif live and dur:
+        speech = sum(max(0.0, r["t1"] - r["t0"]) for r in live)
         cover = speech / dur * 100
-        tail = "（大量无词段落，信息可能在画面 —— 用 video_sheet 抽看）" if cover < 50 else ""
-        L.append(f"语音覆盖 {cover:.0f}%{tail}")
+        tail = ("（大量无词段落，信息可能在画面 —— 用 video_sheet 抽看）"
+                if cover < 50 else "")
+        L.append(f"有声窗口覆盖 {cover:.0f}%（台词 {spoken_chars} 字）{tail}")
+    if (source or "").lower().startswith("asr"):
+        L.append("⚠ 转写来自 ASR：同音错字可能存在（术语/人名尤甚）。"
+                 "要引用原话，回原音或用 `video_frames` 看画面里的硬字幕。")
     if threats:
         L.append(f"风险: {len(threats)} 条（{S.level(threats)}），逐条见全文")
     if chapters and len(chapters) > 1:
@@ -451,23 +561,18 @@ def _digest(meta: dict, rows: list, dur: float, chapters: list, threats: list,
             L.append(f"- `{core.hms(x['from'])}` → `{core.hms(x['to'])}`")
         if len(chapters) > MAX_DIGEST_CHAPTERS:
             L.append(f"- …另有 {len(chapters) - MAX_DIGEST_CHAPTERS} 段")
-    picked: list = []
-    if rows and dur:
-        for i in range(MAX_DIGEST_LINES):
-            t = dur * (i + 0.5) / MAX_DIGEST_LINES
-            near = min(rows, key=lambda r: abs(r["t0"] - t))
-            if (near.get("text") or "").strip() and near not in picked:
-                picked.append(near)
+    picked = _pick_lines(rows, dur, chapters)
     if picked:
         L.append("")
-        L.append("## 关键句（均匀取样，带时间码）")
+        L.append(f"## 关键句（{len(picked)} 句：章节收尾 + 转折句 + 均匀补点，**不是全文证据**）")
         for r in picked:
             L.append(f"- `{core.hms(r['t0'])}` {S.clean(r['text'], 110)}")
     L.append("")
-    L.append(f"全文 {len(brief)} 字：{d / 'brief.md'}")
+    L.append(f"台词 {spoken_chars} 字 · 全文 {len(brief)} 字：{d / 'brief.md'}")
     L.append('要细节别再整份重跑：`video_window(start,end)` 读某段台词 · '
              '`video_sheet` 看某段画面 · `video_brief(level="full")` 才给全文')
-    return _fit(L, MAX_DIGEST_CHARS, tail=2)
+    L.append(_cost("\n".join(L), "（摘要只抽 5 句；全文在磁盘，要核对再读）"))
+    return _fit(L, MAX_DIGEST_CHARS, tail=4)
 
 
 def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
@@ -544,13 +649,16 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
             t0, t1 = _clamp_range(meta, t0, t1)
             rows, gaps, source = _rows_for_window(url, d, meta, t0, t1, lang, model,
                                                   prompt=prompt)
-        sel = [r for r in rows if r["t1"] >= t0 and r["t0"] <= t1]
+        sel = [r for r in rows if r["t1"] >= t0 and r["t0"] <= t1
+               and core.speech_chars(r.get("text")) >= 2]
         gsel = [g for g in gaps if g["t1"] >= t0 and g["t0"] <= t1]
         overflow = max(0, len(sel) - MAX_WINDOW_LINES)
         sel = sel[:MAX_WINDOW_LINES]
         out = [f"# {core.hms(t0)} → {core.hms(t1)}  ({source})", ""]
         if not sel:
-            out.append("- 该区间没有识别到语音（可能是音乐/静音/无词段落）")
+            out.append("- 该区间没有有效台词（音乐/静音/只有填充词；内容可能在画面）"
+                       f" → 看画面：`video_sheet(start={core.hms(t0)!r}, "
+                       f"end={core.hms(t1)!r})`")
         for r in sel:
             out.append(f"- `{core.hms(r['t0'])}` {S.clean(r['text'], 300)}")
         if gsel:
@@ -559,7 +667,8 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
         if overflow:
             out.append("")
             out.append(f"- …还有 {overflow} 行没列出（分几次看，或把 start/end 缩小）")
-        return "\n".join(out)
+        body = "\n".join(out)
+        return body + _cost(body)
     except SystemExit as e:
         return f"ERROR: {e}"
     except Exception as e:
@@ -655,11 +764,14 @@ def video_watch(url: str, minutes: float = 5, cursor: str = "next",
             _watch_write(d, session, {"at": t1})
         # Start-time filter: a row that merely overlaps the boundary would print a
         # timestamp before the segment start ("04:58" in the 05:00–10:00 segment).
+        # A row whose text is just "。" is an ASR window that heard nothing; it
+        # must not count as "this segment has speech".
         sel = [r for r in rows
-               if t0 - 0.2 <= r["t0"] < t1 and (r.get("text") or "").strip()]
+               if t0 - 0.2 <= r["t0"] < t1 and core.speech_chars(r.get("text")) >= 2]
         if not sel:
             sel = [r for r in rows
-                   if r["t1"] >= t0 and r["t0"] <= t1 and (r.get("text") or "").strip()]
+                   if r["t1"] >= t0 and r["t0"] <= t1
+                   and core.speech_chars(r.get("text")) >= 2]
         picked = _evenly(sel, MAX_SEGMENT_LINES)
         total = max(1, int((dur + span - 1e-6) // span)) if dur else 1
         idx = min(total, int(t0 // span) + 1)
@@ -687,7 +799,8 @@ def video_watch(url: str, minutes: float = 5, cursor: str = "next",
             L.append(f"下一步：先向用户汇报这一段（约 {core.hms(t0)}–{core.hms(t1)}）并问"
                      "「继续看还是先讲这段」；用户说继续再调 "
                      f"video_watch(url, minutes={float(minutes or 5):g})，不要一次拉完。")
-        return _fit(L, MAX_SEGMENT_CHARS, tail=3)
+        body = _fit(L, MAX_SEGMENT_CHARS, tail=3)
+        return body + _cost(body)
     except SystemExit as e:
         return f"ERROR: {e}"
     except Exception as e:
@@ -869,7 +982,9 @@ def video_sheet(url: str, start: str | float = "0", end: str | float = "20",
         if not core.has_drawtext():
             txt += ("\n（注意：本机 ffmpeg 没有 drawtext，格子上**没有**烧时间码；"
                     "文件名的起止毫秒仍然准确，按格顺序可推算每格时间）")
-        return [Image(path=str(img)), txt]
+        keep, note = _image_blocks([img])
+        txt += note + _cost(txt)
+        return keep + [txt]
     except SystemExit as e:
         return [f"ERROR: {e}"]
     except Exception as e:
@@ -917,11 +1032,13 @@ def video_frames(url: str, at: list[float], width: int = 960) -> list:
                             made = extra.direct_frames(bv, cid, valid, outd, width)
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
-        out = [Image(path=str(p)) for p in made if p.exists()]
-        out.append("取帧: " + ", ".join(core.hms(t) for t in valid))
+        keep, note = _image_blocks(made)
+        txt = "取帧: " + ", ".join(core.hms(t) for t in valid)
         if skipped:
-            out.append("跳过（超出视频范围）: " + ", ".join(f"{t:g}s" for t in skipped))
-        return out
+            txt += "\n跳过（超出视频范围）: " + ", ".join(f"{t:g}s" for t in skipped)
+        txt += "\n文件: " + "; ".join(str(p) for p in made if p.exists())
+        txt += note + _cost(txt)
+        return keep + [txt]
     except SystemExit as e:
         return [f"ERROR: {e}"]
     except Exception as e:
@@ -1042,13 +1159,14 @@ def video_visual_scan(url: str, n: int = 24, cols: int = 6, rows: int = 4) -> li
     try:
         with _LOCK, _MEDIA_LOCK:
             r = extra.visual_scan(url, n=n, cols=cols, rows=rows)
-        imgs = [Image(path=p) for p in r['sheets'] if Path(p).exists()]
+        keep, note = _image_blocks(r['sheets'])
         txt = (f"抽样 {len(r['picked'])} 帧（切点 {r['cuts']} 个），时长 {core.hms(r['duration'])}。\n"
                + '取点: ' + ', '.join(core.hms(t) for t in r['picked'][:24]) + '\n'
                + '图: ' + '; '.join(r['sheets']))
         if not core.has_drawtext():
             txt += "\n（注意：本机 ffmpeg 没有 drawtext，帧上没有烧时间码；取点顺序见上行）"
-        return imgs[:4] + [txt]
+        txt += note + _cost(txt, "（图按张算，比文本贵 10-100 倍）")
+        return keep[:4] + [txt]
     except SystemExit as e:
         return [f'ERROR: {e}']
     except Exception as e:
@@ -1064,18 +1182,17 @@ def video_comments(url: str, limit: int = 40, with_images: bool = False) -> list
     try:
         with _LOCK, _MEDIA_LOCK:      # comments download pictures into out/<id>/
             info = extra.bili_comments(url, limit=limit)
-        imgs = []
         pics = info.get("pictures") or []
+        keep, note = ([], "")
         if with_images:
-            for p in pics[:4]:
-                loc = p.get("local")
-                if loc and Path(loc).exists():
-                    imgs.append(Image(path=loc))
+            keep, note = _image_blocks(
+                [p.get("local") for p in pics[:4] if p.get("local")])
         block = extra.comments_block(info)
-        if pics and not with_images:
+        if pics and not keep:
             block += (f"\n\n[评论配图 {len(pics)} 张，默认不返回（base64 很占上下文）；"
                       "要看传 with_images=true]")
-        return imgs + [block]
+        block += note + _cost(block)
+        return keep + [block]
     except Exception as e:
         return [_err(e)]
 

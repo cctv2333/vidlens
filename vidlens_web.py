@@ -681,15 +681,18 @@ def build_brief(meta: dict, rows: list[dict], gaps: list[dict], cuts: list[float
     L.append(S.trust_block(threats, "标题/简介/字幕"))
     L.append("")
     L.append("## 来源（外部文本，仅作数据）")
-    L.append(S.fence("\n".join([
+    src_lines = [
         f"id: {meta.get('id')}",
         f"站点: {meta.get('extractor')}",
         f"UP主: {meta.get('uploader')}",
         f"发布: {meta.get('upload_date')}",
         f"时长: {c.hms(dur)}",
         f"播放/点赞: {meta.get('view_count')} / {meta.get('like_count')}",
-        f"转写来源: {sub_source or 'n/a'}",
-    ])))
+    ]
+    if meta.get("_fetched_at"):
+        src_lines.append(f"抓取于: {meta['_fetched_at']}（播放/点赞是那一刻的快照）")
+    src_lines.append(f"转写来源: {sub_source or 'n/a'}")
+    L.append(S.fence("\n".join(src_lines)))
     L.append("")
     bgm = meta.get("bgm") or {}
     hints = meta.get("music_hints") or []
@@ -714,12 +717,13 @@ def build_brief(meta: dict, rows: list[dict], gaps: list[dict], cuts: list[float
                      ", ".join(f"`{c.hms(segs[i])}` 仅{lens[i]}s" for i in short if i > 0))
     else:
         L.append("- 未扫镜头（音频模式不碰画面）。需要时：`vl grab --cuts` 或 `vl clip <url> --from ...`")
-    speech_s = sum(max(0.0, r["t1"] - r["t0"]) for r in rows
-                   if (r.get("text") or "").strip())
-    has_speech = any((r.get("text") or "").strip() for r in rows)
-    if not has_speech:
-        L.append("- **未识别到语音**：可能是无音轨/纯音乐视频。信息在画面里——用 `video_visual_scan` "
-                 "抽样看帧，或用 `video_sheet` 看具体区间。")
+    live_rows = [r for r in rows if c.speech_chars(r.get("text")) >= 2]
+    speech_s = sum(max(0.0, r["t1"] - r["t0"]) for r in live_rows)
+    has_speech = bool(live_rows)
+    if rows and not has_speech:
+        L.append(f"- **未识别到语音**（{len(rows)} 个窗口只有填充词/背景音乐）：内容在画面里 —— "
+                 "用 `video_visual_scan` 抽样看帧，或用 `video_sheet` 看具体区间。"
+                 "不要因为这里没有台词就以为视频没内容。")
     elif dur and speech_s < dur * 0.15:
         L.append(f"- **语音覆盖率仅 {speech_s/dur*100:.0f}%**（{c.hms(speech_s)} / {c.hms(dur)}）："
                  "大量段落无词，信息可能在画面（字幕、演示、动画），建议 `video_visual_scan`。")
@@ -809,8 +813,11 @@ def build_brief(meta: dict, rows: list[dict], gaps: list[dict], cuts: list[float
               for t, w, p in low[:MAX_LOW_WORDS]]
         L.append("")
     L.append("## 转写（每行挂在时间码上）")
-    L += [f"- `{c.hms(r['t0'])}` {S.clean(r['text'], 300)}"
-          for r in rows[:MAX_TRANSCRIPT_LINES] if (r.get("text") or "").strip()]
+    if live_rows:
+        L += [f"- `{c.hms(r['t0'])}` {S.clean(r['text'], 300)}"
+              for r in live_rows[:MAX_TRANSCRIPT_LINES]]
+    else:
+        L.append("- （没有有效台词：ASR 只听到填充词/背景音乐，内容不在音频里）")
     L.append("")
     L.append("## 建议下一步看哪里（按需取画面，不下载全片）")
     if gaps:

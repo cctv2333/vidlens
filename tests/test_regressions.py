@@ -256,5 +256,150 @@ class OutputBudgetTests(unittest.TestCase):
         self.assertIn("略去", out)
 
 
+class NoSpeechTests(unittest.TestCase):
+    """A musical video came back as "语音覆盖 100%" with a 1089-character transcript.
+
+    ASR emits one row per audio window even when it heard nothing, so the rows are
+    "。" with `track: speech`. Counting those as speech made the caller reason about
+    a script that did not exist; the fix is a real character count, everywhere.
+    """
+
+    def test_punctuation_is_not_speech(self):
+        self.assertEqual(C.speech_chars("。"), 0)
+        self.assertEqual(C.speech_chars("…—、"), 0)
+        self.assertEqual(C.speech_chars("哎。"), 1)
+        self.assertEqual(C.speech_chars("这是一句台词"), 6)
+
+    def _no_speech_rows(self):
+        return [{"t0": float(i * 20), "t1": float(i * 20 + 20), "text": "。",
+                 "track": "speech"} for i in range(11)]
+
+    def test_digest_says_there_is_no_speech(self):
+        rows = self._no_speech_rows()
+        out = M._digest({"id": "BV1", "title": "纯音乐", "extractor": "BiliBili"},
+                        rows, 210.234, [], [], "asr(sensevoice)",
+                        "x" * 1089, Path("out/BV1"))
+        self.assertIn("几乎无人声", out)
+        self.assertNotIn("语音覆盖 100%", out)
+        self.assertNotIn("有声窗口覆盖", out)
+        self.assertIn("台词 0 字", out)
+        # …and it points at the route that can actually see this video.
+        self.assertIn("video_visual_scan", out)
+
+    def test_brief_marks_a_silent_video_instead_of_a_clean_transcript(self):
+        rows = self._no_speech_rows()
+        text = W.build_brief({"id": "BV1", "title": "纯音乐", "extractor": "BiliBili"},
+                             rows, [], [], 210.234, [], "asr(sensevoice)", "sensevoice")
+        self.assertIn("未识别到语音", text)
+        self.assertIn("没有有效台词", text)
+
+    def test_punctuation_rows_do_not_print_as_transcript_lines(self):
+        rows = self._no_speech_rows()
+        text = W.build_brief({"id": "BV1", "title": "纯音乐", "extractor": "BiliBili"},
+                             rows, [], [], 210.234, [], "asr(sensevoice)", "sensevoice")
+        self.assertNotIn("`00:00.000` 。", text)
+
+
+class DigestSamplingTests(unittest.TestCase):
+    """Uniform sampling walked past the sentence that decided the video's meaning.
+
+    An argument closes at the end of a section; five evenly spaced anchors gave
+    the caller a table of contents that read like a summary and was wrong.
+    """
+
+    def test_a_pivot_sentence_survives_sampling(self):
+        rows = []
+        for i in range(40):
+            text = f"第{i}段填充内容，讲一些过程性的事情。" * 2
+            if i == 21:      # the line that matters: not on any uniform anchor
+                text = "总之，前面那些不是重点，真正的问题在于证据链断了。"
+            rows.append({"t0": float(i * 10), "t1": float(i * 10 + 9), "text": text})
+        out = M._digest({"id": "BV1", "title": "t", "extractor": "x"},
+                        rows, 400.0, [], [], "subs(zh)", "x" * 4000, Path("out/BV1"))
+        self.assertIn("真正的问题在于证据链断了", out)
+
+    def test_digest_admits_it_is_not_evidence(self):
+        rows = [{"t0": float(i * 10), "t1": float(i * 10 + 9), "text": f"第{i}段内容" * 3}
+                for i in range(30)]
+        out = M._digest({"id": "BV1", "title": "t", "extractor": "x"},
+                        rows, 300.0, [], [], "subs(zh)", "x" * 3000, Path("out/BV1"))
+        self.assertIn("不是全文证据", out)
+        self.assertIn("覆盖: 音频 ✓", out)
+
+
+class InlineImageTests(unittest.TestCase):
+    """An MCP image block is base64 on the wire: a 340KB sheet is ~450k characters."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.big = Path(self.dir) / "big.jpg"
+        self.small = Path(self.dir) / "small.jpg"
+        self.big.write_bytes(b"x" * (M.MAX_INLINE_IMAGE_BYTES + 1))
+        self.small.write_bytes(b"x" * 512)
+
+    def tearDown(self):
+        for p in (self.big, self.small):
+            p.unlink(missing_ok=True)
+        os.rmdir(self.dir)
+
+    def test_big_images_are_left_on_disk(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_INLINE_IMAGES": "auto"}):
+            keep, note = M._image_blocks([self.big])
+        self.assertEqual(keep, [])
+        self.assertIn("未内联", note)
+        self.assertIn("big.jpg", note)
+
+    def test_small_images_still_travel(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_INLINE_IMAGES": "auto"}):
+            keep, note = M._image_blocks([self.small])
+        self.assertEqual(len(keep), 1)
+        self.assertEqual(note, "")
+
+    def test_never_means_never(self):
+        with mock.patch.dict(os.environ, {"VIDLENS_INLINE_IMAGES": "never"}):
+            keep, _note = M._image_blocks([self.small])
+        self.assertEqual(keep, [])
+
+    def test_the_bridge_asks_for_every_image(self):
+        # The plugin converts Image -> file path, so `auto` would only lose pictures.
+        src = (ROOT.parent / "vidlens-mcp-dsh" / "bridge" / "vidlens_bridge.py")
+        if not src.exists():
+            self.skipTest("sibling repo not present")
+        self.assertIn('VIDLENS_INLINE_IMAGES", "always"', src.read_text(encoding="utf-8"))
+
+
+class MetaSnapshotTests(unittest.TestCase):
+    """Two tools reported 75336 and 73595 plays for the same video; neither said "snapshot"."""
+
+    def test_brief_stamps_when_the_counts_were_taken(self):
+        meta = {"id": "BV1", "title": "t", "extractor": "BiliBili",
+                "view_count": 1, "like_count": 2, "_fetched_at": "2026-10-26 16:00"}
+        text = W.build_brief(meta, [], [], [], 10.0, [], "subs(zh)", "zh")
+        self.assertIn("抓取于: 2026-10-26 16:00", text)
+        self.assertIn("快照", text)
+
+    def test_brief_without_a_stamp_says_nothing_extra(self):
+        meta = {"id": "BV1", "title": "t", "extractor": "BiliBili", "view_count": 1}
+        text = W.build_brief(meta, [], [], [], 10.0, [], "subs(zh)", "zh")
+        self.assertNotIn("抓取于", text)
+
+
+class CostLineTests(unittest.TestCase):
+    """The caller could not tell what a call would cost, so it guessed and overflowed."""
+
+    def test_cost_line_reports_an_estimate(self):
+        line = M._cost("x" * 1500)
+        self.assertIn("成本", line)
+        self.assertIn("tok", line)
+        self.assertIn("估算", line)
+
+    def test_digest_carries_its_own_cost(self):
+        rows = [{"t0": float(i * 10), "t1": float(i * 10 + 9), "text": f"第{i}段内容" * 3}
+                for i in range(20)]
+        out = M._digest({"id": "BV1", "title": "t", "extractor": "x"},
+                        rows, 200.0, [], [], "subs(zh)", "x" * 2000, Path("out/BV1"))
+        self.assertIn("[成本]", out)
+
+
 if __name__ == "__main__":
     unittest.main()

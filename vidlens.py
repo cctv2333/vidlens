@@ -139,6 +139,22 @@ def hms(t: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}" if h else f"{m:02d}:{s:06.3f}"
 
 
+_PUNCT_ONLY = re.compile(r"[\s\u3000。，、！？；：·…—–\-~,\.!?;:\"'“”‘’()（）\[\]【】《》<>]+")
+
+
+def speech_chars(text: str) -> int:
+    """How many characters of an ASR row actually carry words.
+
+    An ASR emits one row per audio window whether or not there was anything to
+    hear, so a silent video comes back as rows whose text is "。" or "哎。" and
+    whose `track` is still "speech". Treating those as speech is how a purely
+    musical video ended up reported as "语音覆盖 100%" with a 1089-character
+    "transcript" — the caller then reasoned about a script that did not exist.
+    Punctuation and whitespace alone count as zero.
+    """
+    return len(_PUNCT_ONLY.sub("", text or ""))
+
+
 def parse_t(s: str) -> float:
     s = s.strip()
     if ":" in s:
