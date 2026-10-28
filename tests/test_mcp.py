@@ -13,7 +13,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from mcp import Client, StdioServerParameters  # noqa: E402
+
+# `mcp` is a hard dependency of the server but an OPTIONAL one for the test run:
+# a machine that only has yt-dlp + ffmpeg should still be able to run the other
+# 200+ tests instead of dying on this import.
+try:
+    from mcp import Client, StdioServerParameters  # noqa: E402
+    HAVE_MCP = True
+except Exception as _e:  # pragma: no cover - depends on the environment
+    Client = StdioServerParameters = None
+    HAVE_MCP = False
+    print(f"[skip] mcp SDK not installed ({_e}); MCP tests will be skipped",
+          file=sys.stderr)
+
+NEEDS_MCP = unittest.skipUnless(HAVE_MCP, "需要 mcp SDK：pip install mcp")
 
 PY = sys.executable
 SRV = str(ROOT / "vl_mcp.py")
@@ -37,6 +50,7 @@ def run(coro_fn, timeout=180):
     return asyncio.run(asyncio.wait_for(coro_fn(), timeout=timeout))
 
 
+@NEEDS_MCP
 class McpTests(unittest.TestCase):
     def _client(self):
         env = dict(os.environ)
@@ -105,6 +119,7 @@ class McpTests(unittest.TestCase):
 DEMO = ROOT / "demo" / "meeting.mp4"
 
 
+@NEEDS_MCP
 class LocalFileTests(unittest.TestCase):
     """本地路径要能穿过 MCP：不是 URL，也不该被当成 URL。"""
 
@@ -162,6 +177,7 @@ class LocalFileTests(unittest.TestCase):
         self.assertTrue(src.exists())
 
 
+@NEEDS_MCP
 class OutputBudgetTests(unittest.TestCase):
     """Caps must actually cap. `tail=0` used to mean "return everything unchanged"."""
 
