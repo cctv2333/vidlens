@@ -380,7 +380,7 @@ out/<视频id>/
   `mcp.json`）。本次包解压后 94 项测试通过。
 - 许可证：**MIT**（见 `LICENSE`）；模型权重不随仓库/分发包分发。
 
-## 测试（209 项，默认不依赖网络）
+## 测试（228 项，默认不依赖网络）
 
 ```bash
 .venv\Scripts\python.exe -m unittest discover -s tests -v
@@ -413,10 +413,28 @@ git tag v1.4.0 && git push origin v1.4.0
 
 已做 / 未做 / 验收标准 / 不做清单：[ROADMAP.md](ROADMAP.md)。
 
+## 疑难杂症（别人机器上真踩过的）
+
+按报错原文找，不用猜：
+
+| 报错 / 现象 | 原因 | 怎么办 |
+|---|---|---|
+| `No module named 'faster_whisper'` | ASR 依赖没装（或 pip 装到了另一个解释器） | `pip install "vidlens-mcp[all]"`；确认 `python -c "import faster_whisper"` 用的是同一个解释器 |
+| `No module named 'tokenizers'` | faster-whisper 装上了，但依赖被 `--no-deps` 跳过 | `pip install tokenizers`；`doctor` 现在单独检查它，并写明别用 `--no-deps` |
+| `LocalEntryNotFoundError: whisper 'small'` | 默认要 small，但机器上只有 tiny/base；或模型目录里只有一两个文件 | 1.7.0 起**自动降级**到已装的模型并在结果里注明；也可 `VIDLENS_WHISPER_MODEL=tiny` 指定 |
+| 下载"超时"，随后几分钟全卡住 | 第二个下载在等第一个的文件锁，看起来像网络慢 | `vidlens_models(action="status")` 看是否还在跑；**同一时刻只允许一个下载**，第二个会立刻被拒并说明原因 |
+| 下载说成功，用的时候说"不在本地" | 以前只检查目录名存在 | 现在校验 4 个必需文件：`model.bin` / `config.json` / `tokenizer.json` / `vocabulary.txt`，缺哪个报哪个 |
+| 模型下到了 `F:\hf-cache`，工具去 C 盘找 | `snapshot_download` 用了环境里的 HF 缓存 | 现在显式 `cache_dir=模型目录`；`doctor` 打印 `HF_HUB_CACHE` 与实际目录 |
+| Windows 上 `your machine does not support them`（symlink），磁盘占双份 | 没开开发者模式，hub 同时写 blob 和 snapshot | 现在自动设 `HF_HUB_DISABLE_SYMLINKS=1`，纯复制模式 |
+| `models list` 里列了，`download` 说"未知模型" | 清单和下载器是两张手写的表 | 1.7.0 起由**同一张注册表**驱动，`可下载` / `需自备` 直接标在清单里 |
+| `TypeError: open() got an unexpected keyword argument 'metadata_errors'` | faster-whisper 1.2.x 与 av>=13 不兼容 | 已内置补丁（只删这个 kwarg，不改行为）；或 `pip install "av<13"` |
+| 宿主超时 30 秒，484MB 下到一半就断 | 用 shell/终端工具下模型 | 下模型用 `vidlens_models(action="download", confirm=true)`（插件给 900 秒），别用通用命令工具 |
+
 ## 已知坑（都是实测踩过的）
 
 1. **`av` 版本**：faster-whisper 1.2.1 用 `av.open(metadata_errors=...)`，av 19 已删该参数。
-   本工具绕开 PyAV，用 ffmpeg 自解码 16k 波形喂模型。
+   我们通常绕开 PyAV（用 ffmpeg 自解码 16k 波形喂模型），但 1.7.0 起**同时**打了兼容补丁，
+   所以即使某个调用路径走回 PyAV 也不会炸。
 2. **`HF_HUB_DISABLE_XET=1` 必须设**，否则 hf-mirror 走 Xet 会 401。
 3. **`--download-sections` 要求可执行文件名就是 `ffmpeg`**，而 imageio 给的是
    `ffmpeg-win-x86_64-v7.1.exe` → 用 `ffmpeg_dir()` 建一个软链接/副本。

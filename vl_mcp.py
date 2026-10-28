@@ -52,7 +52,7 @@ import vidlens_web as web
 
 mcp = MCPServer(
     "vidlens",
-    version="1.6.3",
+    version="1.7.0",
     instructions=(
         "按人类看片的习惯工作：先 video_meta（0 下载），再 video_plan（0 下载）看章节，"
         "挑 2-3 段用 video_window / video_sheet；平台字幕优先用 video_subs（0 下载），"
@@ -318,8 +318,13 @@ def _rows_with_media(url: str, d: Path, lang: str, model: str, refresh: bool,
         rows, info = web.transcribe(media, model=model, lang=lang, on_progress=cb,
                                     prompt=prompt or None)
         backend = info.get("backend") or "whisper"
+        used = info.get("model") or model
+        swapped = used != (info.get("model_requested") or model)
         if backend == "whisper":
-            info["source"] = f"asr(audio {mb:.1f}MB, model={model})"
+            info["source"] = f"asr(audio {mb:.1f}MB, model={used})"
+            if swapped:
+                info["source"] += (f"（请求 {info.get('model_requested') or model} 未安装，"
+                                   f"自动改用已装的 {used}）")
         else:
             info["source"] = f"asr({backend}, audio {mb:.1f}MB)"
         if notes:
@@ -660,7 +665,14 @@ def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
                 except Exception:
                     gaps = []
                 backend = win_info.get("backend") or "whisper"
-                source = f"asr(window {core.hms(t0)}-{core.hms(t1)}, {backend})"
+                used = win_info.get("model") or model
+                req = win_info.get("model_requested") or model
+                source = f"asr(window {core.hms(t0)}-{core.hms(t1)}, {backend}"
+                if backend == "whisper":
+                    source += f", model={used}"
+                    if used != req:
+                        source += f"（请求 {req} 未装，改用 {used}）"
+                source += ")"
                 sec.unlink(missing_ok=True)
             except SystemExit:
                 # Some sites cannot cut a section; fall back to the cached full audio.
@@ -712,7 +724,8 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
         if not sel:
             out.append("- 该区间没有有效台词（音乐/静音/只有填充词；内容可能在画面）"
                        f" → 看画面：`video_sheet(start={core.hms(t0)!r}, "
-                       f"end={core.hms(t1)!r})`")
+                       f"end={core.hms(t1)!r})`；画面上有字就用 `video_ocr`（本地 OCR，"
+                       "离线，能读烧录字幕/图表）")
         for r in sel:
             out.append(f"- `{core.hms(r['t0'])}` {S.clean(r['text'], 300)}")
         if gsel:
@@ -897,7 +910,9 @@ def video_audio(url: str, start: str | float = "0", end: str | float = "20", lan
             text = (rich.get("text") or "").strip()
             out.append(f"- 文本: {S.clean(text, 400) if text else '（无明显语音）'}")
         else:
-            out.append("- 本地 SenseVoice 不可用：只有节拍/能量；ASR 会回退 Whisper。")
+            out.append("- 本地 SenseVoice 不可用：这一段只有节拍/能量，**没有**语种/情感/事件/文本。"
+                       "要台词请用 `video_window`（会走 Whisper），要情绪请结合画面判断——"
+                       "不要把这一节当成「音频没信息」。")
         if tempo["bpm"] > 0:
             zone = "快" if tempo["bpm"] >= 120 else ("慢" if tempo["bpm"] < 80 else "中")
             out.append(f"- 估计节拍: {tempo['bpm']:.1f} BPM"
@@ -1352,7 +1367,8 @@ def video_comments(url: str, limit: int = 40, with_images: bool = False) -> list
 def vidlens_models(action: str = "list", name: str = "", confirm: bool = False) -> str:
     """本地模型目录 / 硬件建议 / **下载**（大小、落点、换目录都说清）。
     action=list 看目录（含本机解析出的真实路径）；action=recommend 看这台机器适合哪个；
-    action=download 装某个模型：先只报大小与落点，传 confirm=true 才真下。"""
+    action=download 装某个模型：先只报大小与落点，传 confirm=true 才真下；
+    action=status 看下载是否还在跑（客户端超时后用它，别重复发第二次下载）。"""
     try:
         act = (action or "list").strip().lower()
         if act in ("recommend", "推荐"):
@@ -1364,6 +1380,20 @@ def vidlens_models(action: str = "list", name: str = "", confirm: bool = False) 
                     f"- 推荐 ASR: {r['recommended_asr']}\n"
                     f"- 可选音频事件: {r['optional_audio']}（不是 ASR）\n"
                     f"- {r['note']}")
+        if act in ("status", "状态"):
+            st = models_mod.download_state()
+            if st.get("status") == "idle":
+                return ("# 没有下载记录\n"
+                        f"- 当前可用的 whisper：{', '.join(models_mod.installed_whisper()) or '无'}\n"
+                        f"- 模型根目录：`{models_mod.MODEL_ROOT}`")
+            return ("# 下载状态\n"
+                    f"- 状态: {st.get('status')}\n"
+                    f"- 模型: {st.get('name')}\n"
+                    f"- 进程 {st.get('pid')} 存活: {st.get('process_alive')}\n"
+                    f"- 目录: {st.get('dir')}\n"
+                    f"- 更新于: {st.get('updated')}\n"
+                    "若状态是 running 且进程已不在，说明下载被中断：重跑同一条 download "
+                    "命令即可续传（不要并行开第二个）。")
         if act in ("download", "install", "下载"):
             if not name:
                 return ("要给 name。可下载的: "
@@ -1380,10 +1410,14 @@ def vidlens_models(action: str = "list", name: str = "", confirm: bool = False) 
                  f"- 模型根目录: `{models_mod.MODEL_ROOT}`",
                  f"- whisper 目录: `{models_mod.WHISPER_ROOT}`",
                  f"- 声音事件目录: `{models_mod.install_dir('ced-mini')}`",
+                 f"- 已装 whisper: {', '.join(models_mod.installed_whisper()) or '无'}"
+                 f"（默认用 {models_mod.resolve_whisper('')}；"
+                 "`VIDLENS_WHISPER_MODEL` 可改）",
                  "", ]
         for m in items:
             mark = "已安装" if m["installed"] else "未安装"
-            lines.append(f"- **{m['name']}**  {m['size_mb']}MB  [{mark}]  {m['purpose']}")
+            can = "可下载" if m.get("downloadable") else "需自备"
+            lines.append(f"- **{m['name']}**  {m['size_mb']}MB  [{mark}·{can}]  {m['purpose']}")
             lines.append(f"    - {m['note']}  许可证: {m['license']}")
         r = models_mod.recommend()
         lines += ["", f"本机: 内存 {r['ram_gb']}GB / CPU {r['cpu_cores']} 核 / "

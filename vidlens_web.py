@@ -756,6 +756,30 @@ def download_audio_section(url: str, d: Path, t0: float, t1: float,
 
 # ------------------------------------------------------------------ analysis
 
+def _patch_av_open() -> bool:
+    """faster-whisper 1.2.x passes `metadata_errors=` to `av.open()`; av>=13 dropped it.
+
+    Symptom on a clean install: `TypeError: open() got an unexpected keyword argument
+    'metadata_errors'`. Pinning av<13 also works, but a machine that already has av 19
+    (or installs it for something else) should not lose ASR over one keyword.
+    """
+    try:
+        import av
+        import inspect
+        if "metadata_errors" in inspect.signature(av.open).parameters:
+            return False
+        orig = av.open
+
+        def open_(*a, **kw):
+            kw.pop("metadata_errors", None)
+            return orig(*a, **kw)
+
+        av.open = open_
+        return True
+    except Exception:
+        return False
+
+
 def transcribe(path: Path, model="small", device="cpu", compute="int8",
                lang="zh", beam=1, prompt=None, on_progress=None) -> tuple[list[dict], dict]:
     """Local ASR dispatcher.
@@ -782,6 +806,10 @@ def transcribe(path: Path, model="small", device="cpu", compute="int8",
                 raise
             # auto: fall through to whisper
 
+    import vidlens_models as models_mod
+    _patch_av_open()
+    requested = model
+    model = models_mod.resolve_whisper(model)     # never demand a model that is absent
     from faster_whisper import WhisperModel
     c = core()
     common = dict(device=device, compute_type=compute, download_root=c.model_dir(),
@@ -793,7 +821,6 @@ def transcribe(path: Path, model="small", device="cpu", compute="int8",
         # It used to fall through to `local_files_only=False`, i.e. faster-whisper
         # pulled hundreds of MB on a first call without telling anyone. Ask first,
         # and say where it would land.
-        import vidlens_models as models_mod
         # No confirm here: `auto` only waives the question for small models, and a
         # half-gigabyte whisper is not one of them.
         ok, report = models_mod.acquire(f"whisper-{model}")
@@ -821,8 +848,8 @@ def transcribe(path: Path, model="small", device="cpu", compute="int8",
                 pass
     meta = {"language": info.language, "language_probability": round(info.language_probability, 4),
             "duration": round(info.duration, 3), "segments": len(rows),
-            "model": model, "device": device, "backend": "whisper",
-            "local_files_only": local_only}
+            "model": model, "model_requested": requested, "device": device,
+            "backend": "whisper", "local_files_only": local_only}
     return rows, meta
 
 

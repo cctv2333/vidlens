@@ -159,6 +159,41 @@ def doctor() -> list[dict]:
         except Exception as e:
             add(f"dep:{mod}", False, str(e)[:80])
 
+    # `find_spec` says "installed" for a package whose own import explodes (tokenizers
+    # missing, av ABI mismatch). Import it for real, and name the transitive one.
+    try:
+        import faster_whisper
+        from faster_whisper import WhisperModel  # noqa: F401
+        add("dep:faster_whisper import", True,
+            f"{getattr(faster_whisper, '__version__', '?')} @ {Path(faster_whisper.__file__).parent}")
+    except Exception as e:
+        add("dep:faster_whisper import", False, f"{type(e).__name__}: {e}"[:120])
+    try:
+        import tokenizers
+        add("dep:tokenizers (hard dep of faster-whisper)", True,
+            getattr(tokenizers, "__version__", "?"))
+    except Exception as e:
+        add("dep:tokenizers (hard dep of faster-whisper)", False,
+            f"{type(e).__name__}: {e}  ← `pip install tokenizers`（不要用 --no-deps 装 faster-whisper）"[:140])
+    try:
+        import av
+        ver = tuple(int(x) for x in re.findall(r"\d+", getattr(av, "__version__", "0"))[:2] or [0, 0])
+        patched = web._patch_av_open() if hasattr(web, "_patch_av_open") else False
+        add("dep:av", True, f"{getattr(av, '__version__', '?')}"
+                            + ("（已打 metadata_errors 兼容补丁）" if ver >= (13, 0) else ""))
+    except Exception as e:
+        add("dep:av", False, str(e)[:80])
+
+    # Where downloads would actually land, versus what HF thinks its cache is.
+    try:
+        import vidlens_models as mm
+        add("model dirs", True,
+            f"root={mm.MODEL_ROOT}｜whisper={mm.WHISPER_ROOT}"
+            f"｜HF_HUB_CACHE={os.environ.get('HF_HUB_CACHE') or '(未设)'}"
+            f"｜可用 whisper: {', '.join(mm.installed_whisper()) or '无'}")
+    except Exception as e:
+        add("model dirs", False, str(e)[:80])
+
     try:
         import vidlens_ocr as ocr
         ok, why = ocr.available()
@@ -176,6 +211,21 @@ def doctor() -> list[dict]:
     add("whisper model", bool(model_files),
         f"{md} ({round(sum(f.stat().st_size for f in model_files)/1048576)} MB)" if model_files
         else f"not found under {md}")
+
+    # A directory named `models--Systran--faster-whisper-*` can contain one file and
+    # still load-fail later. Check the four files faster-whisper actually reads.
+    try:
+        import vidlens_models as mm
+        sizes = ("large-v3", "medium", "small", "base", "tiny")
+        good = [s for s in sizes if mm.whisper_complete(s)]
+        broken = [f"{s}(缺{len(mm.whisper_missing(s))})" for s in sizes
+                  if mm.whisper_dir(s).exists() and not mm.whisper_complete(s)]
+        add("whisper files", bool(good),
+            f"完整: {', '.join(good) or '无'}｜不完整: {', '.join(broken) or '无'}"
+            f"｜默认会用 {mm.resolve_whisper('')}")
+    except Exception as e:
+        add("whisper files", False, str(e)[:80])
+
 
     try:
         free = shutil.disk_usage(web.out_root().anchor or "C:\\").free / 1073741824

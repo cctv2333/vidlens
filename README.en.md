@@ -316,11 +316,26 @@ vl models --recommend            # advice from RAM/CPU/disk
 ## Tests
 
 ```bash
-python -m unittest discover -s tests   # 209 tests, 1 skipped; network-free by default
+python -m unittest discover -s tests   # 228 tests, 1 skipped; network-free by default
 ```
 
 CI runs Ubuntu and Windows on Python 3.10 and 3.12. Releases go out on a `v*` tag with OIDC
 (no PyPI or npm tokens). **`pyproject.toml` must not contain a BOM.**
+
+## Troubleshooting (all of these happened on a real machine)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `No module named 'faster_whisper'` | ASR extras missing, or pip installed into another interpreter | `pip install "vidlens-mcp[all]"`, then confirm `python -c "import faster_whisper"` uses that interpreter |
+| `No module named 'tokenizers'` | faster-whisper installed with `--no-deps` | `pip install tokenizers`; `doctor` now checks it separately |
+| `LocalEntryNotFoundError: whisper 'small'` | default is small but only tiny/base exists, or the folder holds one file | since 1.7.0 the tool **falls back to whatever is installed** and says so; `VIDLENS_WHISPER_MODEL=tiny` to pin |
+| "timeout" on a download, then minutes of silence | a second download queued behind the first one's file lock | `vidlens_models(action="status")`; **one download at a time** — the second is refused immediately, with the reason |
+| download says ok, later "not local" | only the directory name was checked | the four required files are now verified: `model.bin` / `config.json` / `tokenizer.json` / `vocabulary.txt` |
+| weights landed in `F:\hf-cache` while the tool looks in C: | `snapshot_download` honoured the ambient HF cache | we pass `cache_dir=<model dir>` explicitly; `doctor` prints both |
+| Windows `your machine does not support them` (symlinks), double disk | no developer mode: hub writes blobs *and* snapshots | `HF_HUB_DISABLE_SYMLINKS=1` is set automatically |
+| listed in `models list`, "unknown model" on download | two hand-written lists | since 1.7.0 one registry drives both and marks *downloadable* vs *bring your own* |
+| `TypeError: open() got an unexpected keyword argument 'metadata_errors'` | faster-whisper 1.2.x vs av>=13 | a runtime shim drops that keyword; or `pip install "av<13"` |
+| a 484MB fetch dies at the host's 30s timeout | downloading through a generic shell tool | use `vidlens_models(action="download", confirm=true)` (900s in the plugin) |
 
 ## Known limits
 

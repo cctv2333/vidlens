@@ -144,6 +144,16 @@ class ModelAcquireTests(unittest.TestCase):
     script with a hardcoded D: path.
     """
 
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vl-acq-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        # acquire() writes a state file into the model root; without this, tests
+        # leave `download.state.json` in the user's real model directory.
+        self._root = M_mod.MODEL_ROOT
+        M_mod.MODEL_ROOT = self.tmp
+        self.addCleanup(lambda: setattr(M_mod, "MODEL_ROOT", self._root))
     def test_notice_names_size_directory_and_how_to_move(self):
         n = M_mod.install_notice("ced-mini")
         self.assertIn("10MB", n)
@@ -181,6 +191,7 @@ class ModelAcquireTests(unittest.TestCase):
 
         with mock.patch.dict(os.environ, {"VIDLENS_MODEL_AUTO_DOWNLOAD": "auto"}), \
                 mock.patch.object(M_mod, "_ced_installed", return_value=False), \
+                mock.patch.object(M_mod, "install_dir", lambda name: self.tmp), \
                 mock.patch.object(M_mod, "_download_file", side_effect=fake):
             ok, report = M_mod.acquire("ced-mini")
         self.assertTrue(ok, report)
@@ -194,6 +205,7 @@ class ModelAcquireTests(unittest.TestCase):
 
         with mock.patch.dict(os.environ, {"VIDLENS_MODEL_AUTO_DOWNLOAD": "ask"}), \
                 mock.patch.object(M_mod, "_ced_installed", return_value=False), \
+                mock.patch.object(M_mod, "install_dir", lambda name: self.tmp), \
                 mock.patch.object(M_mod, "_download_file", side_effect=fake):
             ok, _report = M_mod.acquire("ced-mini", confirm=True)
         self.assertTrue(ok)

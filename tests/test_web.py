@@ -170,6 +170,41 @@ class UrlShapeTests(unittest.TestCase):
         self.assertEqual(W.extractor_hint("ERROR: HTTP Error 404"), "")
 
 
+class AvCompatTests(unittest.TestCase):
+    """faster-whisper 1.2.x passes `metadata_errors=` to av.open(); av>=13 dropped it."""
+
+    def test_patch_drops_the_removed_keyword(self):
+        import types
+        seen = {}
+
+        def fake_open(*a, **kw):
+            seen.update(kw)
+            return "ok"
+
+        fake = types.SimpleNamespace(open=fake_open)
+        sys.modules["av"] = fake
+        try:
+            self.assertTrue(W._patch_av_open())
+            fake.open(file="x", metadata_errors="ignore")
+            self.assertNotIn("metadata_errors", seen)
+            self.assertEqual(seen.get("file"), "x")
+        finally:
+            sys.modules.pop("av", None)
+
+    def test_no_patch_when_av_still_accepts_it(self):
+        import types
+
+        def modern_open(*a, metadata_errors=None, **kw):
+            return "ok"
+
+        fake = types.SimpleNamespace(open=modern_open)
+        sys.modules["av"] = fake
+        try:
+            self.assertFalse(W._patch_av_open())
+        finally:
+            sys.modules.pop("av", None)
+
+
 class ArgTests(unittest.TestCase):
     def test_section_args_are_bounded(self):
         args = W.section_args(120.0, 140.0, 360, False)
