@@ -29,7 +29,7 @@
 | B-023 | `[FIXED]` 每次新进程/新对话都看到“下载模型” | faster-whisper 加载前走 HF 联网检查（不是重下 483MB 权重） | 本地缓存存在时 `local_files_only=True`；失败再回退联网；实测 1.68s 加载 |
 | B-024 | `[FIXED]` 用户已有 SenseVoice ONNX（937MB），工具却只认 Whisper | 没接 sherpa-onnx 后端 | 新增 `vidlens_sensevoice.py`；复用现成模型 + 308KB 词表；实测 1.54s 加载 |
 | B-025 | `[FIXED]` 没有音频情感/事件/节拍信号 | 只做 ASR 和静音检测 | SenseVoice 的 emotion/event + numpy 节拍估计；`video_audio`；全部标启发式 |
-| B-026 | `[OPEN]` B 站 AI 字幕没有专门入口 | 只走 yt-dlp 通用字幕；匿名 `player/v2` 为空，`need_login_subtitle=true` | 字幕语言已加 `ai-zh`；代码路径已就绪；正例需登录 cookie（Edge 锁定中） |
+| B-026 | `[FIXED]` B 站 AI 字幕没有专门入口 | 没把「站方说有字幕」与「我们没拿到」区分开 | 1.7.1：`video_subs` 检测到 `need_login_subtitle`/`has_auto_subs` 时明说登录态问题 + 给 `VIDLENS_COOKIES_FROM_BROWSER`；正例仍需 cookie |
 | B-027 | `[FIXED]` SenseVoice 跑完来源仍写 `model=small` | `_rows_with_media`/`cmd_grab` 用入参 model 拼来源 | 读 `info["backend"]`，来源写 `asr(sensevoice, ...)` / `asr(whisper, ...)` |
 | B-028 | `[FIXED]` 有语音+背景音乐时只显示“背景音乐”，易误读为无语音 | SenseVoice 每块只给一个 event 标签 | brief 加注“有语音的段落也可能同时有背景音乐” |
 | B-029 | `[FIXED]` 默认字幕语言不含 `ai-zh`，B 站 AI 字幕匹配不到 | 默认列表只有 zh.* / en.* | 加 `ai-zh,ai-en,ai-ja,ai-ko,ai-yue,ai-*` |
@@ -52,7 +52,7 @@
 | B-046 | `[FIXED]` `sanitize.scan` 对不可见字符只报第一个（循环里 `break`），混用零宽 + bidi 时只看到 1 个 | 报首个即可的取舍，但丢掉了「几种」这个信号 | 汇总所有命中的码位：证据里带「共 N 种不可见字符: U+200B, U+202E」 |
 | B-047 | `[WONTFIX]` 没有 `import vidlens; vidlens.probe(...)` 这种函数式 API，`cmd_*` 只吃 `argparse.Namespace` | 设计上把「能返回结构化数据」的函数放在 `vl_mcp`（`video_meta` 等），CLI 只是外壳 | 文档写清：程序化调用请用 `vl_mcp.*`（真返回 str/dict，不伪造 Namespace）；不为 CLI 再造一层 |
 | B-048 | `[NOT-A-BUG]` 审计称 `video_meta("not a url")` 报「yt-dlp not installed」属于错误分类不当 | 该沙盒确实没装 yt-dlp（他们同时报 B 站 403，环境不一致）；消息本身准确 | 区分环境/输入/内容三类错误仍是好建议（见 B-049 待办）；本地实测同一调用给的是 `[generic] 'not a url' is not a valid URL` |
-| B-049 | `[OPEN]` 错误只有中文文本，没有稳定的机器可读分类（`ENV_ERROR` / `INPUT_ERROR` / `NOT_FOUND`） | 历史实现直接返回字符串 | 计划：在 `_err` / `SystemExit` 出口加 `code=` 前缀，并让插件回执带上 code；需要同时改 MCP 与 CLI 两条路径 |
+| B-049 | `[FIXED]` 错误只有中文文本，没有稳定的机器可读分类 | 历史实现直接返回字符串 | 1.7.1：`_code()`/`_fail()` 给所有出口加 `ERROR[E_AUTH|E_DEP|E_URL|E_SOURCE|E_TIMEOUT|E_MEDIA|E_OTHER]`；7 个分类有测试 |
 | B-050 | `[FIXED]` 一次「看视频」实测往上下文塞 ~14,200 字符（brief 独占 9,052），两三个视频就撞模型上下文上限，用户看到「对话已超过上下文限制」 | 输出按「给人看的完整报告」设计：单次调用=全量，没有分级、没有行数上限；而工具结果之后**每一轮都留在上下文里**，成本是乘数而不是加法 | brief 默认 `level="digest"`（≤1600 字：标题/时长/语音覆盖/章节/5 句均匀取样+全文路径），`level="full"` 才给 6–9k；后台 job 同样默认摘要（`full=true` 才全量）；`video_window` 加 80 行上限并明说「还有 N 行」；插件提示词加预算纪律（同一视频不重复 brief、图一次 1 张、frames ≤2）；实测同一个视频 digest 741 字 vs full 9,052 字（12×） |
 
 | B-051 | `[FIXED]` 一轮之内把全片拉完：实测一次「评价这个视频」= brief 9k 字 ×2 + 评论 4 张 base64 图 + 拼图，直接顶爆 64k 上下文 | ① MCP 工具返回 `str` 时框架自动生成 structured output，客户端把 `content[].text` 与 `structuredContent.result` 两份都收下（等于 2 倍）；② 没有「分段推进」原语，模型只能一次 brief 到底；③ `video_comments` 默认带 4 张 base64 截图 | ① 16 个工具全部 `structured_output=False`（`list_tools` 里 `output_schema=None`，不再有第二份）；② 新增 `video_watch(url, minutes=5, cursor=next/restart/stop)`：一次一段（实测 491–522 字），带「已看 X / 共 Y（%）」和"先汇报再问用户"的下一步；进度存 `out/<id>/watch.json`；③ `video_comments(with_images=False)` 默认不带图，只提示"有 N 张"；④ 插件提示词改成「看一点、说一点、停下问」 |
@@ -85,3 +85,6 @@
 | B-078 | `[FIXED]` **下载落点不听指挥**：权重进了 `F:\hf-cache`（env 里的 HF 缓存），工具却去 `%LOCALAPPDATA%\vidlens\models` 找；Windows 无开发者模式时 symlink 失败、blob+snapshot 双份占盘 | `WhisperModel(...)` 构造式下载，把缓存目录交给 huggingface_hub 决定 | 改走 `snapshot_download(cache_dir=<whisper 目录>, allow_patterns=4 个文件)`；Windows 先设 `HF_HUB_DISABLE_SYMLINKS=1`；顺带不再为「下载」把 484MB 模型加载进内存 |
 | B-079 | `[FIXED]` **doctor 的依赖检查会撒谎**：`tokenizers` 缺失时 `find_spec` 仍报「已安装」；也不检查 av 版本、模型目录、文件完整性 | 用 `find_spec` 而不是真导入 | 改真 `import` + 具名检查（faster_whisper import / tokenizers 硬依赖 / av 版本 / model dirs / whisper files）；不完整模型标 `不完整(缺N)` |
 | B-080 | `[FIXED]` **`os.kill(pid, 0)` 在 Windows 上是 TerminateProcess**：用它做「进程是否存活」的探针，会把正在下载的进程直接杀掉 | 把 POSIX 习惯套到 Windows | 单独 `_pid_alive()`：Windows 用 `OpenProcess(SYNCHRONIZE)`，POSIX 才用 `os.kill(pid, 0)`；测试断言只读不杀 |
+| B-081 | `[FIXED]` **`_fit(tail=0)` 等于把上限关掉**：`video_ocr` 传 `tail=0`，`_fit` 里 `if len<=limit or tail<=0: return text` 直接原样返回 —— `MAX_OCR_CHARS=3200` 从来没生效过（body 可达 ~15k）。外部审计报的是「成本行加在截断之后」，实际更重 | 把 `tail<=0` 当成「不需要保护尾部」，结果连截断一起跳过了 | `tail<=0` 改成硬截断 `text[:limit]`；`video_ocr` 把 `_cost` 放进列表再 `_fit(..., tail=1)`；3 条测试锁住语义 |
+| B-082 | `[FIXED]` **`video_full` 失败只回一个数字**：`ERROR: 下载失败 rc=1`，原因（stderr）在 `rc[2]` 里没被用 | 把 `run_yt` 的返回值当成了单个状态码 | 带回 stderr 前 400 字 + cookie/extractor 提示；测试断言 stderr 出现在结果里 |
+| B-083 | `[NOT-A-BUG]` 外部审计报「`_rows_for_window` 回退路径删掉缓存音频」。核对 1.7.0 源码：回退分支（677-689）**没有** `unlink`；`media.unlink` 只在 `_rows_with_media`（brief 路径，339 行）里，转写已落盘后删音频是有意的 | 把两个函数看混了 | 不改代码；此事登记在此，避免下次重复排查 |

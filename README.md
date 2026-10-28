@@ -430,6 +430,8 @@ git tag v1.4.0 && git push origin v1.4.0
 | `TypeError: open() got an unexpected keyword argument 'metadata_errors'` | faster-whisper 1.2.x 与 av>=13 不兼容 | 已内置补丁（只删这个 kwarg，不改行为）；或 `pip install "av<13"` |
 | 宿主超时 30 秒，484MB 下到一半就断 | 用 shell/终端工具下模型 | 下模型用 `vidlens_models(action="download", confirm=true)`（插件给 900 秒），别用通用命令工具 |
 
+错误行统一带机器可读码：`ERROR[E_AUTH]`（cookie/登录）、`E_DEP`（缺依赖或模型）、`E_URL`（链接形式不认）、
+`E_SOURCE`（站方拿不到/DRM）、`E_TIMEOUT`、`E_MEDIA`（文件读不出）、`E_OTHER`。码后面那句才是给人看的。
 ## 已知坑（都是实测踩过的）
 
 1. **`av` 版本**：faster-whisper 1.2.1 用 `av.open(metadata_errors=...)`，av 19 已删该参数。

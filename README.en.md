@@ -337,6 +337,9 @@ CI runs Ubuntu and Windows on Python 3.10 and 3.12. Releases go out on a `v*` ta
 | `TypeError: open() got an unexpected keyword argument 'metadata_errors'` | faster-whisper 1.2.x vs av>=13 | a runtime shim drops that keyword; or `pip install "av<13"` |
 | a 484MB fetch dies at the host's 30s timeout | downloading through a generic shell tool | use `vidlens_models(action="download", confirm=true)` (900s in the plugin) |
 
+Every error line carries a stable code: `ERROR[E_AUTH]` (cookie/login), `E_DEP` (missing dependency or
+model), `E_URL` (URL shape), `E_SOURCE` (site/extractor/DRM), `E_TIMEOUT`, `E_MEDIA` (unreadable file),
+`E_OTHER`. The sentence after the code is the human explanation.
 ## Known limits
 
 - Platform subtitle availability varies by site and time; Bilibili's AI captions usually need

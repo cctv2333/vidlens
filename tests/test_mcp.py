@@ -162,5 +162,61 @@ class LocalFileTests(unittest.TestCase):
         self.assertTrue(src.exists())
 
 
+class OutputBudgetTests(unittest.TestCase):
+    """Caps must actually cap. `tail=0` used to mean "return everything unchanged"."""
+
+    def _mcp(self):
+        sys.path.insert(0, str(ROOT))
+        import vl_mcp  # noqa: E402
+        return vl_mcp
+
+    def test_fit_with_zero_tail_still_truncates(self):
+        m = self._mcp()
+        self.assertEqual(len(m._fit(["x" * 5000], 100, tail=0)), 100)
+
+    def test_fit_keeps_the_last_line(self):
+        m = self._mcp()
+        out = m._fit(["x" * 5000, "COST LINE"], 600, tail=1)
+        self.assertTrue(out.endswith("COST LINE"), out[-40:])
+        self.assertLessEqual(len(out), 700)
+
+    def test_ocr_budget_really_bounds_the_output(self):
+        m = self._mcp()
+        lines = ["- `00:00.000` " + "字" * 200 for _ in range(60)]
+        lines.append("COST")
+        out = m._fit(lines, m.MAX_OCR_CHARS, tail=1)
+        self.assertLessEqual(len(out), m.MAX_OCR_CHARS + 60)
+        self.assertIn("略去", out)
+
+    def test_full_download_failure_explains_itself(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        m = self._mcp()
+        d = Path(tempfile.mkdtemp(prefix="vl-full-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        with mock.patch.object(m, "_dir", lambda url: ({"duration": 10.0}, d)), \
+                mock.patch.object(m.web, "run_yt",
+                                  lambda *a, **k: (1, "", "ERROR: Video unavailable in your country")):
+            out = m.video_full("https://example.com/x", confirm=True)
+        self.assertIn("Video unavailable", out)
+
+
+    def test_error_codes_are_stable(self):
+        m = self._mcp()
+        cases = {
+            "could not find chrome cookies database": "E_AUTH",
+            "No module named 'tokenizers'": "E_DEP",
+            'Unsupported url scheme: "d"': "E_URL",
+            "[iqiyi] Can't find any video": "E_SOURCE",
+            "Connection timed out": "E_TIMEOUT",
+            "读不出时长：a.mp4": "E_MEDIA",
+            "something odd": "E_OTHER",
+        }
+        for msg, want in cases.items():
+            self.assertEqual(m._code(msg), want, msg)
+            self.assertTrue(m._fail(msg).startswith(f"ERROR[{want}]"), msg)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

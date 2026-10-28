@@ -52,7 +52,7 @@ import vidlens_web as web
 
 mcp = MCPServer(
     "vidlens",
-    version="1.7.0",
+    version="1.7.1",
     instructions=(
         "按人类看片的习惯工作：先 video_meta（0 下载），再 video_plan（0 下载）看章节，"
         "挑 2-3 段用 video_window / video_sheet；平台字幕优先用 video_subs（0 下载），"
@@ -116,7 +116,34 @@ BYTES_PER_MB = 1024 * 1024
 
 
 def _err(e: Exception) -> str:
-    return f"ERROR: {type(e).__name__}: {e}"
+    detail = f"{type(e).__name__}: {e}"
+    return f"ERROR[{_code(detail)}]: {detail}"
+
+
+# One stable tag in front of every error, so a caller can branch without parsing
+# Chinese (B-049). The sentence after it is still the human explanation.
+_ERR_RULES = (
+    (("cookie", "cookies", "登录", "login", "大会员"), "E_AUTH"),
+    (("不在本地", "no module named", "localentrynotfound", "没有 faster", "未安装",
+      "install"), "E_DEP"),
+    (("unsupported url", "url scheme", "scheme"), "E_URL"),
+    (("can't find any video", "drm", "unavailable", "不支持"), "E_SOURCE"),
+    (("timeout", "timed out", "超时"), "E_TIMEOUT"),
+    (("读不出", "不是视频", "损坏", "decode"), "E_MEDIA"),
+)
+
+
+def _code(text: str) -> str:
+    low = (text or "").lower()
+    for keys, code in _ERR_RULES:
+        if any(k.lower() in low for k in keys):
+            return code
+    return "E_OTHER"
+
+
+def _fail(e) -> str:
+    msg = str(e)
+    return f"ERROR[{_code(msg)}]: {msg}"
 
 
 def _dir(url: str) -> tuple[dict, Path]:
@@ -434,7 +461,7 @@ def video_meta(url: str) -> str:
         ]
         return "\n".join(lines)
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -465,7 +492,7 @@ def video_plan(url: str, window: float = DEFAULT_CHAPTER_WINDOW) -> str:
                     "每段用 `video_window` 读台词、`video_sheet` 看画面。"]
         return "\n".join(out)
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -485,6 +512,13 @@ def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
                     return ("这是本地文件，没有平台字幕（那种字幕只存在于网站上）。\n"
                             "- 台词：`video_brief`（本地 ASR）\n"
                             "- 画面硬字幕：`video_ocr`（本地 OCR，离线）")
+                if meta.get("need_login_subtitle") or meta.get("has_auto_subs"):
+                    return ("没有拿到字幕，但**站方说这条是有字幕的**"
+                            "（`need_login_subtitle=true` / `has_auto_subs` 非空）。\n"
+                            "B 站把 AI 字幕放在需要登录态的接口后面：设 "
+                            "`VIDLENS_COOKIES_FROM_BROWSER=edge`（或 chrome）后再调一次，"
+                            "0 下载、比 ASR 准。\n"
+                            "不想用 cookie：`video_brief` 走本地 ASR，或用 `video_ocr` 读画面硬字幕。")
                 return ("没有可用的平台字幕（人工/自动都没有）。\n"
                         "- 可用 `video_brief` 走本地 ASR；方言/口音重时结果可能不准。\n"
                         "- 也可用 `video_sheet` 看画面里的硬字幕。")
@@ -514,7 +548,7 @@ def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
                        "缩 `limit`，或用 `video_seek(query)` 直接查原话）")
         return "\n".join(out) + _cost("\n".join(out))
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -575,7 +609,7 @@ def video_brief(url: str, lang: str = "zh", model: str = "small",
             return body + _cost(body, "（全文会一直留在上下文里；下次先要 digest）") + extra
         return _digest(meta, rows, dur, chapters, threats, source, brief, d) + extra
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -737,7 +771,7 @@ def video_window(url: str, start: str | float = "0", end: str | float = "60", la
         body = "\n".join(out)
         return body + _cost(body)
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -773,10 +807,16 @@ def _fit(lines: list, limit: int, tail: int = 2) -> str:
 
     A blind ``[:limit]`` slice could remove the last line — the one that tells the
     caller how to continue — which is the most expensive line to lose.
+
+    ``tail=0`` used to mean "return everything unchanged", which silently disabled
+    the budget for the one caller that passed it (video_ocr). Now it means "no tail
+    to protect, hard cut": a cap that silently does nothing is worse than no cap.
     """
     text = "\n".join(lines)
-    if len(text) <= limit or tail <= 0:
+    if len(text) <= limit:
         return text
+    if tail <= 0:
+        return text[:limit]
     keep = lines[-tail:]
     head = lines[:-tail]
     budget = max(200, limit - len("\n".join(keep)) - 40)
@@ -869,7 +909,7 @@ def video_watch(url: str, minutes: float = 5, cursor: str = "next",
         body = _fit(L, MAX_SEGMENT_CHARS, tail=3)
         return body + _cost(body)
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -923,7 +963,7 @@ def video_audio(url: str, start: str | float = "0", end: str | float = "20", lan
         out.append("- 说明: 节拍/情感/事件都是近似信号，必须结合画面和原音核对。")
         return "\n".join(out)
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -997,7 +1037,7 @@ def video_soundscape(url: str, start: str | float = "0", end: str | float = "60"
                           min_prob=max(0.0, min(1.0, float(min_prob))))
         return _format_soundscape(t0, t1, res)
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -1055,7 +1095,7 @@ def video_sheet(url: str, start: str | float = "0", end: str | float = "20",
         txt += note + _cost(txt)
         return keep + [txt]
     except SystemExit as e:
-        return [f"ERROR: {e}"]
+        return [_fail(e)]
     except Exception as e:
         return [_err(e)]
 
@@ -1109,7 +1149,7 @@ def video_frames(url: str, at: list[float], width: int = 960) -> list:
         txt += note + _cost(txt)
         return keep + [txt]
     except SystemExit as e:
-        return [f"ERROR: {e}"]
+        return [_fail(e)]
     except Exception as e:
         return [_err(e)]
 
@@ -1130,7 +1170,10 @@ def video_full(url: str, confirm: bool = False, max_mb: float = MAX_FULL_MB) -> 
                 rc = web.run_yt(["-f", "bv*+ba/b", "-o", str(d / "full.%(ext)s"), url])
             files = [p for p in d.glob("full.*") if p.suffix.lower() in (".mp4", ".mkv", ".webm")]
             if not files:
-                return f"ERROR: 下载失败 rc={rc[0]}"
+                detail = (rc[2] or rc[1] or "").strip()[:400]
+                return (f"ERROR: 下载失败 rc={rc[0]}"
+                        + (f"：{detail}" if detail else "（yt-dlp 没有输出原因）")
+                        + web.cookie_hint(rc[2] or "") + web.extractor_hint(rc[2] or ""))
             f = max(files, key=lambda p: p.stat().st_size)
             mb = f.stat().st_size / BYTES_PER_MB
             if mb > max_mb:
@@ -1138,7 +1181,7 @@ def video_full(url: str, confirm: bool = False, max_mb: float = MAX_FULL_MB) -> 
                 return f"ERROR: 文件 {mb:.0f}MB 超过上限 {max_mb}MB，已删除"
         return f"已下载: {f} ({mb:.1f}MB)"
     except SystemExit as e:
-        return f"ERROR: {e}"
+        return _fail(e)
     except Exception as e:
         return _err(e)
 
@@ -1308,9 +1351,10 @@ def video_ocr(url: str, start: str | float = "0", end: str | float = "",
             L.append("- 画面里没有识别到可用文字：这可能是纯画面/实拍/动画视频，"
                      "信息只能从构图、字幕条、场景判断；用 `video_visual_scan` 看 18 帧。")
         body = "\n".join(L)
-        return preamble + _fit([body], MAX_OCR_CHARS, tail=0) + _cost(body)
+        L.append(_cost(body))          # inside the budget, so _fit can cut it too
+        return preamble + _fit(L, MAX_OCR_CHARS, tail=1)
     except SystemExit as e:
-        return preamble + f"ERROR: {e}"
+        return preamble + _fail(e)
     except Exception as e:
         return preamble + _err(e)
 
