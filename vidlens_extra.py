@@ -363,6 +363,14 @@ def bili_comments(url: str, limit: int = 40, download_pics: bool = True,
             except Exception:
                 p["local"] = None
 
+    # The pager fetches by page (20 at a time), so `limit=30` returned 36. Cut to the
+    # number that was asked for and remember what was dropped, so `limit` means
+    # something and the reply can say "fetched N, showing M" (R-5).
+    fetched = len(out["comments"])
+    if fetched > limit:
+        out["comments"] = out["comments"][:limit]
+        out["trimmed"] = fetched - limit
+
     texts = [c["text_clean"] for c in out["comments"]]
     blob = "".join(texts)
     neg = sum(blob.count(k) for k in NEG)
@@ -400,6 +408,8 @@ def comments_block(info: dict, top: int = 8) -> str:
              f"，弹幕 {info.get('danmaku')}")
     L.append(f"- 抓取到 {len(info['comments'])} 条，负面词 {info['neg_hits']} 次 / 正面词 {info['pos_hits']} 次"
              f"（每百条负面 {info['neg_per_100']}；点赞加权负面占比 {info.get('neg_like_ratio')}%）")
+    if info.get("trimmed"):
+        L.append(f"- 另有 {info['trimmed']} 条已抓到但按 limit 截掉（要更多就传更大的 limit）")
     L.append(f"- **争议度估计：{info['controversy']}**（词频+点赞加权+互动比，启发式；需人工看原评论）")
     if info.get("scam_reports"):
         L.append(f"- ⚠ **仿号/诈骗报告 {info['scam_reports']} 条**：评论区在举报冒充账号，"
@@ -529,7 +539,12 @@ def plan(url: str, window: float = web.DEFAULT_CHAPTER_WINDOW,
         cuts = []
     gaps = web.read_pauses(d)
     chapters = web.plan_chapters(dur, cuts, gaps, window)
-    return {'id': meta.get('id'), 'duration': dur, 'chapters': chapters,
+    # Where the boundaries came from decides how the plan should be WORDED: a grid
+    # is not a chapter, and calling it one makes the model invent narrative turns.
+    source = ("cuts" if cuts
+              else "gaps" if any(float(g.get("dur") or 0) >= 2.0 for g in gaps)
+              else "grid")
+    return {'id': meta.get('id'), 'duration': dur, 'chapters': chapters, 'source': source,
             'advice': ('先 video_brief 拿全局；再按章节用 video_window 读台词、'
                        'video_sheet 看画面，不要一次下整片。')}
 

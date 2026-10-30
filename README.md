@@ -380,7 +380,7 @@ out/<视频id>/
   `mcp.json`）。本次包解压后 94 项测试通过。
 - 许可证：**MIT**（见 `LICENSE`）；模型权重不随仓库/分发包分发。
 
-## 测试（228 项，默认不依赖网络）
+## 测试（247 项，默认不依赖网络）
 
 ```bash
 .venv\Scripts\python.exe -m unittest discover -s tests -v

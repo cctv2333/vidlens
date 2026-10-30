@@ -943,7 +943,7 @@ def build_brief(meta: dict, rows: list[dict], gaps: list[dict], cuts: list[float
         f"id: {meta.get('id')}",
         f"站点: {meta.get('extractor')}",
         f"UP主: {meta.get('uploader')}",
-        f"发布: {meta.get('upload_date')}",
+        f"发布: {c.iso_date(meta.get('upload_date'))}",
         f"时长: {c.hms(dur)}",
         f"播放/点赞: {meta.get('view_count')} / {meta.get('like_count')}",
     ]
@@ -1092,7 +1092,8 @@ def build_brief(meta: dict, rows: list[dict], gaps: list[dict], cuts: list[float
         i = min(range(1, len(lens)), key=lambda k: lens[k])
         L.append(f"- 最短镜头 `{c.hms(segs[i])}`（{lens[i]}s）：可能是快剪拼贴")
     L.append("- 命令示例：`vl clip <url> --from 02:00 --to 02:20`")
-    return "\n".join(L) + "\n"
+    # brief.md is read by the model too, so the same surface naming applies (R-3).
+    return c.retitle("\n".join(L) + "\n")
 
 
 # ------------------------------------------------------------------- commands

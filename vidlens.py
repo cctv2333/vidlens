@@ -169,6 +169,40 @@ def hms(t: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}" if h else f"{m:02d}:{s:06.3f}"
 
 
+def iso_date(value) -> str:
+    """`20261030` -> `2026-10-30`. One shape everywhere; empty stays empty."""
+    s = str(value or "").strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
+
+
+# ------------------------------------------------------- tool names per surface
+#
+# The same function is exposed as `video_*` on a plain MCP server and as
+# `vidlens_*` inside the DSH plugin. Text that tells the model "now call
+# video_window" must use the name of the surface the caller is actually on, or it
+# sends them looking for a tool that does not exist (R-3, 2026-10-31).
+_TOOL_WORDS = ("meta", "plan", "subs", "brief", "window", "watch", "audio",
+               "soundscape", "sheet", "frames", "full", "job_start", "job",
+               "visual_scan", "ocr", "comments", "library", "seek", "compare",
+               "models", "doctor", "budget")
+_TOOL_RE = re.compile(r"\bvideo_(" + "|".join(_TOOL_WORDS) + r")\b")
+
+
+def tool_prefix() -> str:
+    """`video_` (MCP shell) unless the host overrides it (plugin: `vidlens_`)."""
+    return (os.environ.get("VIDLENS_TOOL_PREFIX") or "video_").strip()
+
+
+def retitle(text: str) -> str:
+    """Rewrite tool names in model-facing text for the current surface."""
+    prefix = tool_prefix()
+    if not text or prefix == "video_":
+        return text
+    return _TOOL_RE.sub(lambda m: prefix + m.group(1), text)
+
+
 _PUNCT_ONLY = re.compile(r"[\s\u3000。，、！？；：·…—–\-~,\.!?;:\"'“”‘’()（）\[\]【】《》<>]+")
 
 

@@ -316,7 +316,7 @@ vl models --recommend            # advice from RAM/CPU/disk
 ## Tests
 
 ```bash
-python -m unittest discover -s tests   # 228 tests, 1 skipped; network-free by default
+python -m unittest discover -s tests   # 247 tests, 1 skipped; network-free by default
 ```
 
 CI runs Ubuntu and Windows on Python 3.10 and 3.12. Releases go out on a `v*` tag with OIDC

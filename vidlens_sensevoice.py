@@ -73,6 +73,13 @@ def _first_existing(cands: list, fallback: Path) -> Path:
 CHUNK_SECONDS = 20.0
 LANGS = ("auto", "zh", "en", "ja", "ko", "yue")
 
+# Sentence terminators and soft breakers. SenseVoice returns one token per CJK
+# character, and the token timestamps are the time of that character -- which is
+# what lets a 20s chunk become several sentence rows WITHOUT a second decode.
+SENT_END = "。！？!?…"
+SOFT_END = "，、,;；：:"
+MAX_ROW_CHARS = 60
+
 _RECS: dict[str, object] = {}
 
 
@@ -148,6 +155,70 @@ def decode_samples(samples, lang: str = "auto") -> dict:
     }
 
 
+def split_sentences(text: str, tokens, ts, base_t0: float, base_t1: float) -> list:
+    """Cut one chunk into sentences, timed by per-token timestamps.
+
+    Why this exists: the decoder works in 20-second blocks, so a row used to be
+    "whatever was said between 08:00 and 08:20" -- sentences were cut in half at
+    block edges and every timecode had 20s granularity. For CJK, SenseVoice emits
+    one token per character WITH a timestamp, so the boundary of a sentence is
+    known to the character.
+
+    Falls back to the whole chunk when tokens and text do not line up (English BPE,
+    or ITN rewriting digits), because a wrong split is worse than a coarse one.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    usable = (tokens and len(tokens) == len(ts) == len(text)
+              and "".join(tokens) == text)
+    if not usable:
+        return [{"t0": base_t0, "t1": base_t1, "text": text}]
+
+    bounds, start = [], 0
+    for i, ch in enumerate(text):
+        if ch in SENT_END:
+            bounds.append((start, i + 1))
+            start = i + 1
+        elif ch in SOFT_END and i - start >= MAX_ROW_CHARS:
+            bounds.append((start, i + 1))
+            start = i + 1
+        elif i - start >= MAX_ROW_CHARS * 2:
+            bounds.append((start, i + 1))
+            start = i + 1
+    if start < len(text):
+        bounds.append((start, len(text)))
+
+    out = []
+    for a, b in bounds:
+        seg = text[a:b].strip()
+        if not seg:
+            continue
+        t0 = base_t0 + float(ts[a])
+        t1 = base_t0 + float(ts[b]) if b < len(ts) else base_t1
+        t1 = min(t1, base_t1)
+        out.append({"t0": round(t0, 3), "t1": round(max(t1, t0 + 0.2), 3), "text": seg})
+    return out
+
+
+def _join_rows(rows: list) -> list:
+    """Glue a row that ended mid-sentence onto the next one.
+
+    Sentence splitting is per chunk, so the last sentence of a chunk still stops at
+    the block edge. One pass over the finished list closes those seams.
+    """
+    out: list = []
+    for r in rows:
+        prev_text = (out[-1]["text"] if out else "").strip()
+        if prev_text and not prev_text.rstrip().endswith(tuple(SENT_END)):
+            prev = out[-1]
+            prev["text"] = (prev["text"].rstrip() + (r["text"] or "").lstrip())
+            prev["t1"] = max(prev["t1"], r["t1"])
+            continue
+        out.append(dict(r))
+    return out
+
+
 def transcribe(path, lang: str = "zh", chunk_seconds: float = CHUNK_SECONDS,
                on_progress=None):
     """Return (rows, info) in the same shape as vidlens_web.transcribe.
@@ -177,10 +248,15 @@ def transcribe(path, lang: str = "zh", chunk_seconds: float = CHUNK_SECONDS,
         results.append(r)
         start_s = round(start / sr, 3)
         end_s = round(min(duration, (start + len(part)) / sr), 3)
-        rows.append({"t0": start_s, "t1": end_s, "text": r["text"],
-                     "track": "speech", "words": [],
-                     "lang": r["lang"], "emotion": r["emotion"],
-                     "event": r["event"]})
+        pieces = split_sentences(r["text"], r.get("tokens"), r.get("timestamps"),
+                                 start_s, end_s)
+        if not pieces:
+            pieces = [{"t0": start_s, "t1": end_s, "text": ""}]
+        for piece in pieces:
+            rows.append({"t0": piece["t0"], "t1": piece["t1"], "text": piece["text"],
+                         "track": "speech", "words": [],
+                         "lang": r["lang"], "emotion": r["emotion"],
+                         "event": r["event"]})
         if on_progress:
             try:
                 on_progress(end_s, duration)
@@ -190,13 +266,16 @@ def transcribe(path, lang: str = "zh", chunk_seconds: float = CHUNK_SECONDS,
     langs = Counter(r["lang"] for r in results if r["lang"] and r["lang"] != "nospeech")
     emos = Counter(r["emotion"] for r in results if r["emotion"])
     events = Counter(r["event"] for r in results if r["event"])
+    rows = _join_rows(rows)
     info = {
         "backend": "sensevoice",
         "model": str(_model_path()),
         "duration": round(duration, 3),
         "segments": len([r for r in rows if (r.get("text") or "").strip()]),
+        "sentences": len(rows),
         "chunks": len(results),
         "chunk_seconds": chunk_seconds,
+        "row_format": "sentence",
         "language": langs.most_common(1)[0][0] if langs else "",
         "language_counts": dict(langs),
         "emotion_counts": dict(emos),

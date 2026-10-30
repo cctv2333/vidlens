@@ -92,7 +92,7 @@ def clean(text: str | None, maxlen: int = 4000) -> str:
     t = re.sub(r"\n{3,}", "\n\n", t)
     t = t.strip()
     if len(t) > maxlen:
-        t = t[:maxlen] + "…[truncated]"
+        t = t[:maxlen].rstrip() + "…"
     return t
 
 

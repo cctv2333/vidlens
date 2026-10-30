@@ -27,6 +27,7 @@ video_full(url, confirm=True)        whole file (guarded)
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -52,7 +53,7 @@ import vidlens_web as web
 
 mcp = MCPServer(
     "vidlens",
-    version="1.7.1",
+    version="1.8.0",
     instructions=(
         "按人类看片的习惯工作：先 video_meta（0 下载），再 video_plan（0 下载）看章节，"
         "挑 2-3 段用 video_window / video_sheet；平台字幕优先用 video_subs（0 下载），"
@@ -114,6 +115,13 @@ MIN_CHAPTER_WINDOW = 60.0
 MAX_CHAPTER_WINDOW = 3600.0
 BYTES_PER_MB = 1024 * 1024
 
+
+def surface(fn):
+    """Rewrite `video_*` names in the reply to this surface's tool names (R-3)."""
+    @functools.wraps(fn)
+    def wrapped(*a, **k):
+        return core.retitle(fn(*a, **k))
+    return wrapped
 
 def _err(e: Exception) -> str:
     detail = f"{type(e).__name__}: {e}"
@@ -300,6 +308,25 @@ def _source_label(d: Path) -> str:
     return "asr(cached)"
 
 
+def _cache_format_note(d: Path) -> str:
+    """Old caches hold 20-second blocks; say so instead of silently looking broken.
+
+    Sentence-level rows arrived on 2026-10-31. A transcript written before that
+    still reads fine, but its rows stop at block edges — the caller should be told
+    why, and how to get the new shape, rather than concluding the tool regressed.
+    """
+    p = d / "speech_info.json"
+    if not p.exists():
+        return ""
+    try:
+        info = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    if str(info.get("backend") or "").startswith("sensevoice") and not info.get("row_format"):
+        return "旧缓存格式：20s 分块（要按句重切传 refresh=true，代价是重跑一次 ASR）"
+    return ""
+
+
 def _rows_with_media(url: str, d: Path, lang: str, model: str, refresh: bool,
                      progress=None, prompt: str | None = None):
     """Return (meta, rows, gaps, source_label).
@@ -321,7 +348,8 @@ def _rows_with_media(url: str, d: Path, lang: str, model: str, refresh: bool,
     rows = [] if refresh else _load_rows(d)
     if rows:
         _annotate_rows(rows)
-        return meta, rows, web.read_pauses(d), _source_label(d)
+        note = _cache_format_note(d)
+        return meta, rows, web.read_pauses(d), _source_label(d) + (f"；{note}" if note else "")
 
     with _MEDIA_LOCK:
         sub_rows, sub_name = web.download_subs(url, d, web.sub_langs_for(lang))
@@ -418,6 +446,7 @@ def _skim_notice(url: str, meta: dict) -> str:
 # --------------------------------------------------------------------- tools
 
 @mcp.tool(structured_output=False)
+@surface
 def video_meta(url: str) -> str:
     """读取公开视频的元数据（标题、UP主、时长、发布日期、播放/点赞、是否有字幕）。
     不下载任何媒体，几乎零成本。用于判断"这个视频值不值得看"。"""
@@ -440,7 +469,7 @@ def video_meta(url: str) -> str:
             lines = [
                 f"id: {meta.get('id')}", f"站点: {meta.get('extractor')}",
                 f"标题: {meta.get('title')}", f"UP主: {meta.get('uploader')}",
-                f"发布: {meta.get('upload_date')}", f"时长: {core.hms(float(meta.get('duration') or 0))}",
+                f"发布: {core.iso_date(meta.get('upload_date'))}", f"时长: {core.hms(float(meta.get('duration') or 0))}",
                 f"播放/点赞: {meta.get('view_count')} / {meta.get('like_count')}",
                 f"平台字幕: {len(meta.get('has_subs') or [])} 种，自动字幕: {len(meta.get('has_auto_subs') or [])} 种",
             ]
@@ -467,6 +496,7 @@ def video_meta(url: str) -> str:
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_plan(url: str, window: float = DEFAULT_CHAPTER_WINDOW) -> str:
     """0 下载：按切点/长静音把视频切成章节，给出建议观看顺序。
     长视频默认先调它，再挑 2-3 个章节用 video_window / video_sheet，不要一上来就转写全片。"""
@@ -475,14 +505,31 @@ def video_plan(url: str, window: float = DEFAULT_CHAPTER_WINDOW) -> str:
         with _LOCK:
             pl = extra.plan(url, window=w)
         ch = pl.get("chapters") or []
-        out = [f"# {pl.get('id')}  时长 {core.hms(pl.get('duration') or 0)}",
-               f"章节 {len(ch)} 个（窗口约 {int(w)}s）", ""]
+        dur = float(pl.get("duration") or 0)
+        src = pl.get("source") or ""
+        grid = src == "grid"
+        out = [f"# {pl.get('id')}  时长 {core.hms(dur)}",
+               (f"分段 {len(ch)} 个（**无切点、无长静音**，按 {int(w)}s 网格均分，不是叙事转折）"
+                if grid else f"章节 {len(ch)} 个（窗口约 {int(w)}s）"), ""]
         if len(ch) <= 1:
-            if float(pl.get("duration") or 0) > LONG_VIDEO_SECONDS:
+            if dur > LONG_VIDEO_SECONDS:
                 out.append("没有切点/长静音数据，按固定窗口分段；"
                            "用 `video_window` / `video_sheet` 挑段看。")
             else:
                 out.append("视频不长，一次读完即可；也可以直接 `video_brief`。")
+        elif grid:
+            # A 14-minute talk can exceed the 300s window without ever having a cut
+            # or a long pause. Listing a grid as "chapters" invites the caller to read
+            # narrative turns into arbitrary thirds.
+            if dur <= LONG_VIDEO_SECONDS:
+                out.append(f"这片只有 {core.hms(dur)}，**不需要分段**：一次 "
+                           "`video_brief` 就能读完；要更细就 `video_window` 按时间窗取。")
+            out += [f"- `{core.hms(c['from'])}` → `{core.hms(c['to'])}`（grid）"
+                    for c in ch[:MAX_PLAN_CHAPTERS]]
+            if len(ch) > MAX_PLAN_CHAPTERS:
+                out.append(f"- …另有 {len(ch) - MAX_PLAN_CHAPTERS} 段")
+            out += ["", "这些边界是等分出来的，**不代表内容转折**；"
+                        "要找转折请看 `video_brief` 的关键句，或直接读全文。"]
         else:
             out += [f"- `{core.hms(c['from'])}` → `{core.hms(c['to'])}`"
                     for c in ch[:MAX_PLAN_CHAPTERS]]
@@ -498,6 +545,7 @@ def video_plan(url: str, window: float = DEFAULT_CHAPTER_WINDOW) -> str:
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
     """只读平台字幕轨（人工字幕优先，其次自动字幕），0 媒体下载。
     方言/口音重、ASR 不确定时，先看这里有没有原字幕；没有再用 ASR 或看画面硬字幕。"""
@@ -554,6 +602,7 @@ def video_subs(url: str, lang: str = "zh", limit: int = 200) -> str:
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_brief(url: str, lang: str = "zh", model: str = "small",
                 scan_cuts: bool = False, refresh: bool = False,
                 full: bool = False, prompt: str = "", level: str = "digest") -> str:
@@ -644,7 +693,10 @@ def _digest(meta: dict, rows: list, dur: float, chapters: list, threats: list,
         L.append(f"有声窗口覆盖 {cover:.0f}%（台词 {spoken_chars} 字）{tail}")
     if (source or "").lower().startswith("asr"):
         L.append("⚠ 转写来自 ASR：同音错字可能存在（术语/人名尤甚）。"
-                 "要引用原话，回原音或用 `video_frames` 看画面里的硬字幕。")
+                 "要引用原话，回原音或用 `video_frames` 看画面里的硬字幕。"
+                 "**专名/术语会决定结论时，先花一次 `video_ocr` 核对画面字幕**——"
+                 "ASR 会把「伥鬼」听成「长鬼」、「伯林」听成「柏林」，"
+                 "而错字常常伪装成「作者表述含糊」。")
     if threats:
         L.append(f"风险: {len(threats)} 条（{S.level(threats)}），逐条见全文")
     if chapters and len(chapters) > 1:
@@ -674,7 +726,8 @@ def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
     rows = _load_rows(d)
     if rows:
         _annotate_rows(rows)
-        return rows, web.read_pauses(d), _source_label(d)
+        note = _cache_format_note(d)
+        return rows, web.read_pauses(d), _source_label(d) + (f"；{note}" if note else "")
 
     with _MEDIA_LOCK:
         sub_rows, sub_name = web.download_subs(url, d, web.sub_langs_for(lang))
@@ -737,6 +790,7 @@ def _rows_for_window(url: str, d: Path, meta: dict, t0: float, t1: float,
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_window(url: str, start: str | float = "0", end: str | float = "60", lang: str = "zh",
                  model: str = "small", prompt: str = "") -> str:
     """只看某个时间窗：该窗内的台词（带时间码）与停顿。
@@ -840,6 +894,7 @@ def _evenly(rows: list, want: int) -> list:
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_watch(url: str, minutes: float = 5, cursor: str = "next",
                 lang: str = "zh", model: str = "small", session: str = "") -> str:
     """分段看片：一次只前进一段（默认 5 分钟，约 1k 字），看完就停，等调用方决定。
@@ -915,6 +970,7 @@ def video_watch(url: str, minutes: float = 5, cursor: str = "next",
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_audio(url: str, start: str | float = "0", end: str | float = "20", lang: str = "zh") -> str:
     """听一段：本地 SenseVoice 的语种/情感/音频事件 + 节拍/能量（近似）。
     只下这一段音频（20 秒约 0.5MB），不转写全片。节拍估计对纯语音段意义有限，
@@ -1007,6 +1063,7 @@ def _format_soundscape(t0: float, t1: float, res: dict) -> str:
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_soundscape(url: str, start: str | float = "0", end: str | float = "60", top_k: int = 8,
                      min_prob: float = 0.15, window: float = 10.0,
                      hop: float = 5.0) -> str:
@@ -1043,6 +1100,7 @@ def video_soundscape(url: str, start: str | float = "0", end: str | float = "60"
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_sheet(url: str, start: str | float = "0", end: str | float = "20",
                 cols: int = 4, rows: int = 3, height: int = 360) -> list:
     """只下载这一段（例如 20 秒 ≈ 0.9MB），返回一张拼图，每格左上角烧着绝对时间码。
@@ -1101,6 +1159,7 @@ def video_sheet(url: str, start: str | float = "0", end: str | float = "20",
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_frames(url: str, at: list[float], width: int = 960) -> list:
     """按秒数精确取帧（最多 6 张），返回图片本身。只在需要读小字/看清细节时用。
     注意：取帧需要下载对应片段，成本高于 video_sheet。"""
@@ -1155,6 +1214,7 @@ def video_frames(url: str, at: list[float], width: int = 960) -> list:
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_full(url: str, confirm: bool = False, max_mb: float = MAX_FULL_MB) -> str:
     """下载整片（仅在你明确要看全片时使用）。必须 confirm=True 才会执行。
     普通分析不需要它——先试 video_brief。"""
@@ -1235,6 +1295,7 @@ def _do_brief_locked(progress, url, lang, model, scan_cuts, comments, full, prom
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_job_start(url: str, lang: str = 'zh', model: str = 'small',
                     scan_cuts: bool = False, comments: bool = False,
                     full: bool = False, prompt: str = '') -> str:
@@ -1260,6 +1321,7 @@ def video_job_start(url: str, lang: str = 'zh', model: str = 'small',
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_job(job_id: str, wait_seconds: float = 0) -> str:
     """查询后台任务。wait_seconds 建议 20-30（不要超过 60，否则客户端会超时）。
     完成时返回完整报告；运行中返回 stage + 百分比。"""
@@ -1267,6 +1329,7 @@ def video_job(job_id: str, wait_seconds: float = 0) -> str:
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_ocr(url: str, start: str | float = "0", end: str | float = "",
               n: int = 12, width: int = 1280, install: bool = False) -> str:
     """把画面上的字**读出来**（本地 OCR，离线；不靠人声、不需要平台字幕）。
@@ -1360,6 +1423,7 @@ def video_ocr(url: str, start: str | float = "0", end: str | float = "",
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_visual_scan(url: str, n: int = 24, cols: int = 6, rows: int = 4) -> list:
     """抽样看画面：全片均匀取样（有切点时按切点取）n 帧，每帧烧上绝对时间码，拼成图返回。
     用于没有声音、或长时间无语音的视频。代价：下最低画质视频（7 分钟约 14-21MB），用完即删。"""
@@ -1381,6 +1445,7 @@ def video_visual_scan(url: str, n: int = 24, cols: int = 6, rows: int = 4) -> li
 
 
 @mcp.tool(structured_output=False)
+@surface
 def video_comments(url: str, limit: int = 40, with_images: bool = False) -> list:
     """抓公开视频的评论区（目前支持 B 站，免登录），给出互动比、负面/正面词频、
     争议度启发式估计、高赞评论。默认**不**返回评论配图：一张截图走 MCP 是 base64
@@ -1408,6 +1473,7 @@ def video_comments(url: str, limit: int = 40, with_images: bool = False) -> list
 
 
 @mcp.tool(structured_output=False)
+@surface
 def vidlens_models(action: str = "list", name: str = "", confirm: bool = False) -> str:
     """本地模型目录 / 硬件建议 / **下载**（大小、落点、换目录都说清）。
     action=list 看目录（含本机解析出的真实路径）；action=recommend 看这台机器适合哪个；
@@ -1474,6 +1540,7 @@ def vidlens_models(action: str = "list", name: str = "", confirm: bool = False) 
 
 
 @mcp.tool(structured_output=False)
+@surface
 def vidlens_doctor() -> str:
     """自检：python / ffmpeg / yt-dlp / 依赖 / whisper 模型 / 磁盘 / 网络。哪里断了直接说。"""
     try:
